@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "workspace_root": "../../openclaw",
+  "agents": [
+    {"id":"export-agent","name":"出口业务助手","technical_name":"ExportAgent","emoji":"🛒","workspace":"workspaces/export-agent"},
+    {"id":"payment-advisor","name":"支付条款助手","technical_name":"PaymentAdvisor","emoji":"💱","workspace":"workspaces/payment-advisor"},
+    {"id":"shipping-eta","name":"物流路线助手","technical_name":"ShippingETA","emoji":"🚢","workspace":"workspaces/shipping-eta"},
+    {"id":"invoice-agent","name":"外贸单据助手","technical_name":"InvoiceAgent","emoji":"🧾","workspace":"workspaces/invoice-agent"},
+    {"id":"sinosure-advisor","name":"中信保助手","technical_name":"SinosureAdvisor","emoji":"🛡️","workspace":"workspaces/sinosure-advisor"},
+    {"id":"cbam-calculator","name":"合规计算助手","technical_name":"CBAMCalculator","emoji":"🌱","workspace":"workspaces/cbam-calculator"},
+    {"id":"email-generator","name":"商务邮件助手","technical_name":"EmailGenerator","emoji":"✉️","workspace":"workspaces/email-generator"},
+    {"id":"price-tracker","name":"价格监测助手","technical_name":"PriceTracker","emoji":"💰","workspace":"workspaces/price-tracker"},
+    {"id":"inventory-agent","name":"库存管理助手","technical_name":"InventoryAgent","emoji":"📦","workspace":"workspaces/inventory-agent"},
+    {"id":"inventory-clearance-agent","name":"库存出清助手","technical_name":"InventoryClearanceAgent","emoji":"💸","workspace":"workspaces/inventory-clearance-agent"},
+    {"id":"b2b-marketplace-agent","name":"B2B 平台助手","technical_name":"B2BMarketplaceAgent","emoji":"🤝","workspace":"workspaces/b2b-marketplace-agent"},
+    {"id":"used-bike-trading-agent","name":"二手交易助手","technical_name":"UsedBikeTradingAgent","emoji":"🔄","workspace":"workspaces/used-bike-trading-agent"},
+    {"id":"repair-qa","name":"维修诊断助手","technical_name":"RepairQA","emoji":"🔧","workspace":"workspaces/repair-qa"},
+    {"id":"compatibility-agent","name":"产品兼容助手","technical_name":"CompatibilityAgent","emoji":"⚙️","workspace":"workspaces/compatibility-agent"},
+    {"id":"market-analyzer","name":"市场分析助手","technical_name":"MarketAnalyzer","emoji":"📈","workspace":"workspaces/market-analyzer"},
+    {"id":"country-advisor","name":"国家进入助手","technical_name":"CountryAdvisor","emoji":"🌍","workspace":"workspaces/country-advisor"},
+    {"id":"exhibition-advisor","name":"展会助手","technical_name":"ExhibitionAdvisor","emoji":"🎪","workspace":"workspaces/exhibition-advisor"},
+    {"id":"team-race-advisor","name":"赛事营销助手","technical_name":"TeamRaceAdvisor","emoji":"🏆","workspace":"workspaces/team-race-advisor"},
+    {"id":"supplier-aggregator","name":"供应商聚合助手","technical_name":"SupplierAggregator","emoji":"🏭","workspace":"workspaces/supplier-aggregator"},
+    {"id":"brand-value-crawler","name":"品牌情报助手","technical_name":"BrandValueCrawler","emoji":"💎","workspace":"workspaces/brand-value-crawler"},
+    {"id":"customer-measurement-agent","name":"客户洞察助手","technical_name":"CustomerMeasurementAgent","emoji":"📏","workspace":"workspaces/customer-measurement-agent"},
+    {"id":"rag-agent","name":"知识检索助手","technical_name":"RAGAgent","emoji":"🛍️","workspace":"workspaces/rag-agent"},
+    {"id":"design-advisor","name":"产品设计助手","technical_name":"DesignAdvisor","emoji":"🎨","workspace":"workspaces/design-advisor"},
+    {"id":"route-fetcher","name":"骑行路线助手","technical_name":"RouteFetcher","emoji":"🛤️","workspace":"workspaces/route-fetcher"}
+  ]
+}

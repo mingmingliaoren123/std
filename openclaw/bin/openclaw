@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NODE="$ROOT/runtime/bin/node"
+ENTRY="$ROOT/app/node_modules/openclaw/openclaw.mjs"
+
+if [[ ! -x "$NODE" ]]; then
+  echo "OpenClaw runtime missing: $NODE" >&2
+  exit 1
+fi
+if [[ ! -f "$ENTRY" ]]; then
+  echo "OpenClaw application missing: $ENTRY" >&2
+  exit 1
+fi
+
+export PATH="$ROOT/runtime/bin:$PATH"
+exec "$NODE" "$ENTRY" "$@"

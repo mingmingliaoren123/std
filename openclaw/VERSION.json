@@ -1,0 +1,14 @@
+{
+  "openclaw_version": "2026.7.1-2",
+  "openclaw_tag": "v2026.7.1-2",
+  "release_url": "https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2",
+  "source_archive_url": "https://codeload.github.com/openclaw/openclaw/tar.gz/refs/tags/v2026.7.1-2",
+  "source_archive_sha256": "176513d36ff61b809f768a7043667a19dc20e0e8fb864fd77524774bec0e852b",
+  "published_at": "2026-08-04T00:41:26Z",
+  "npm_integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
+  "npm_tarball_sha256": "5bb525f36f471a41239615d321c441778c7e1c007018ed6d84b795be77803276",
+  "node_version": "22.22.3",
+  "node_archive_sha256": "1c4a9933a5e45bc88f54f70b5f91232c127ec49f1a5989d23fb85824c7adf9b7",
+  "platform": "linux-arm64",
+  "verified_at": "2026-08-10T18:24:00+08:00"
+}

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f7f7f9">
+  <title>STA-100 骑行行业智能工作台</title>
+  <link rel="icon" href="assets/cycling-agent-icon.jpg" type="image/jpeg">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+
+  <main class="auth-screen" id="authScreen" aria-labelledby="authTitle"></main>
+
+  <div class="app-shell" id="appShell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <img class="brand-app-icon" src="assets/cycling-agent-icon.jpg" alt="STA-100 骑行行业智能工作台">
+        <div class="brand-product">
+          <strong>STA-100</strong>
+          <span>骑行行业智能工作台</span>
+        </div>
+        <button class="icon-button sidebar-close" id="sidebarClose" data-action="close-sidebar" aria-label="关闭导航" title="关闭导航">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <nav class="main-nav" aria-label="主导航">
+        <button class="nav-item active" data-page="overview"><span class="nav-emoji" aria-hidden="true">📊</span><span data-i18n="navOverview">概览</span></button>
+        <button class="nav-item" data-page="agents"><span class="nav-emoji" aria-hidden="true">🤖</span><span data-i18n="navAgents">智能体</span><span class="nav-count">24</span></button>
+        <button class="nav-item" data-page="customers"><span class="nav-emoji" aria-hidden="true">👥</span><span data-i18n="navCustomers">客户</span></button>
+        <button class="nav-item" data-page="quotes"><span class="nav-emoji" aria-hidden="true">📄</span><span data-i18n="navQuotes">报价单</span></button>
+        <button class="nav-item" data-page="orders"><span class="nav-emoji" aria-hidden="true">📦</span><span data-i18n="navOrders">订单</span></button>
+        <button class="nav-item" data-page="documents"><span class="nav-emoji" aria-hidden="true">🧾</span><span data-i18n="navDocuments">单据</span></button>
+        <button class="nav-item" data-page="products"><span class="nav-emoji" aria-hidden="true">🚲</span><span data-i18n="navProducts">产品库</span></button>
+        <button class="nav-item" data-page="suppliers"><span class="nav-emoji" aria-hidden="true">🏭</span><span data-i18n="navSuppliers">供应商</span></button>
+        <button class="nav-item" data-page="database"><span class="nav-emoji" aria-hidden="true">📚</span><span data-i18n="navDatabase">数据库</span></button>
+        <button class="nav-item" data-page="news"><span class="nav-emoji" aria-hidden="true">📰</span><span data-i18n="navNews">行业新闻</span><span class="nav-dot" aria-label="有新内容"></span></button>
+        <button class="nav-item" data-page="settings"><span class="nav-emoji" aria-hidden="true">⚙️</span><span data-i18n="navSettings">设置</span></button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="server-mini">
+          <span class="status-dot online"></span>
+          <div><strong data-i18n="serverOnline">服务在线</strong><span data-i18n="serverRegion">欧洲节点</span></div>
+          <span class="latency">38ms</span>
+        </div>
+        <button class="user-mini" data-action="lock">
+          <span class="avatar" id="sidebarAvatar">AD</span>
+          <span><strong id="sidebarUsername">admin</strong><small data-i18n="localAccount">本机账户</small></span>
+          <i data-lucide="lock-keyhole"></i>
+        </button>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button class="icon-button menu-button" id="menuButton" data-action="open-sidebar" aria-label="打开导航" title="打开导航"><i data-lucide="menu"></i></button>
+        <div class="page-heading">
+          <span class="eyebrow" id="pageEyebrow">STA-100 / 工作台</span>
+          <h1 id="pageTitle">📊 概览</h1>
+        </div>
+        <div class="topbar-actions">
+          <label class="global-search">
+            <i data-lucide="search"></i>
+            <input id="globalSearch" type="search" placeholder="搜索客户、订单、产品或文件">
+            <kbd>Ctrl K</kbd>
+          </label>
+          <button class="icon-button" data-action="refresh" aria-label="刷新" title="刷新"><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button notification-button" data-action="notifications" aria-label="通知" title="通知"><i data-lucide="bell"></i><span></span></button>
+          <div class="segmented language-switch" aria-label="语言">
+            <button class="active" data-lang="zh">中</button><button data-lang="en">EN</button>
+          </div>
+        </div>
+      </header>
+
+      <main id="pageRoot" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-header">
+        <div><span class="eyebrow" id="modalEyebrow">STA-100</span><h2 id="modalTitle">详情</h2></div>
+        <button class="icon-button" data-action="close-modal" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
+      </header>
+      <div class="modal-body" id="modalBody"></div>
+      <footer class="modal-footer" id="modalFooter"></footer>
+    </section>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" hidden>
+    <aside class="drawer" id="drawer" aria-labelledby="drawerTitle">
+      <header class="drawer-header">
+        <div><span class="eyebrow" id="drawerEyebrow">详情</span><h2 id="drawerTitle">记录详情</h2></div>
+        <button class="icon-button" data-action="close-drawer" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
+      </header>
+      <div class="drawer-body" id="drawerBody"></div>
+    </aside>
+  </div>
+
+  <div class="command-backdrop" id="commandBackdrop" hidden>
+    <section class="command-panel" role="dialog" aria-modal="true" aria-label="全局搜索">
+      <label><i data-lucide="search"></i><input id="commandInput" placeholder="输入客户、订单、产品或文件名称"><kbd>ESC</kbd></label>
+      <div id="commandResults"></div>
+    </section>
+  </div>
+
+  <script src="assets/lucide.min.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
