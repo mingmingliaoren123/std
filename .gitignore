@@ -1,0 +1,9 @@
+# OpenClaw dependencies are restored by openclaw/scripts/deploy.sh.
+openclaw/app/node_modules/
+
+# Downloaded packages and bundled runtimes are deployment caches.
+openclaw/downloads/
+openclaw/runtime/
+
+# Runtime state backups can contain customer data and credentials.
+openclaw/backups/
