@@ -2,39 +2,50 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNTIME="$ROOT/runtime"
 APP="$ROOT/app"
-PACKAGE="$ROOT/downloads/openclaw-2026.7.1-2.tgz"
 CLI="$ROOT/bin/openclaw"
 UNIT_SOURCE="$ROOT/systemd/openclaw-gateway.service"
 UNIT_TARGET="$HOME/.config/systemd/user/openclaw-gateway.service"
-EXPECTED_NODE="v22.22.3"
 EXPECTED_OPENCLAW="2026.7.1-2"
 
-export PATH="$RUNTIME/bin:$PATH"
+if [[ -n "${OPENCLAW_NODE:-}" ]]; then
+  NODE="$OPENCLAW_NODE"
+elif [[ -x /usr/bin/node ]]; then
+  NODE=/usr/bin/node
+else
+  NODE="$(command -v node || true)"
+fi
 
-[[ -x "$RUNTIME/bin/node" ]] || { echo "Missing Node runtime" >&2; exit 1; }
-[[ -f "$PACKAGE" ]] || { echo "Missing OpenClaw package" >&2; exit 1; }
-[[ "$($RUNTIME/bin/node --version)" == "$EXPECTED_NODE" ]] || { echo "Unexpected Node version" >&2; exit 1; }
+if [[ -n "${OPENCLAW_NPM:-}" ]]; then
+  NPM="$OPENCLAW_NPM"
+elif [[ -x /usr/bin/npm ]]; then
+  NPM=/usr/bin/npm
+else
+  NPM="$(command -v npm || true)"
+fi
 
-printf '%s  %s\n' \
-  '1c4a9933a5e45bc88f54f70b5f91232c127ec49f1a5989d23fb85824c7adf9b7' \
-  "$ROOT/downloads/node-v22.22.3-linux-arm64.tar.xz" | sha256sum -c -
-printf '%s  %s\n' \
-  '5bb525f36f471a41239615d321c441778c7e1c007018ed6d84b795be77803276' \
-  "$PACKAGE" | sha256sum -c -
+[[ -x "$NODE" ]] || { echo "Node.js is not available in the current box environment" >&2; exit 1; }
+[[ -x "$NPM" ]] || { echo "npm is not available in the current box environment" >&2; exit 1; }
+"$NODE" -e '
+  const [major, minor, patch] = process.versions.node.split(".").map(Number);
+  const compatible =
+    (major === 22 && (minor > 22 || (minor === 22 && patch >= 3))) ||
+    (major === 24 && minor >= 15) ||
+    (major >= 25 && (major > 25 || minor >= 9));
+  process.exit(compatible ? 0 : 1);
+' || { echo "OpenClaw requires Node.js >=22.22.3 <23, >=24.15.0 <25, or >=25.9.0; found $($NODE --version)" >&2; exit 1; }
 
 systemctl --user stop openclaw-gateway.service 2>/dev/null || true
 "$ROOT/scripts/backup-state.sh"
 
 INSTALLED_VERSION=""
 if [[ -f "$APP/node_modules/openclaw/package.json" ]]; then
-  INSTALLED_VERSION="$($RUNTIME/bin/node -p "require('$APP/node_modules/openclaw/package.json').version")"
+  INSTALLED_VERSION="$($NODE -p "require('$APP/node_modules/openclaw/package.json').version")"
 fi
 if [[ "$INSTALLED_VERSION" != "$EXPECTED_OPENCLAW" ]] || [[ "${FORCE_REINSTALL:-0}" == "1" ]]; then
-  "$RUNTIME/bin/npm" install \
+  "$NPM" install \
     --prefix "$APP" \
-    "$PACKAGE" \
+    "openclaw@$EXPECTED_OPENCLAW" \
     --omit=dev \
     --registry="${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}"
 fi
@@ -48,7 +59,7 @@ ACTUAL_VERSION="$($CLI --version | sed -n 's/^OpenClaw \([^ ]*\).*/\1/p')"
 mkdir -p "$(dirname "$UNIT_TARGET")"
 sed \
   -e "s|Environment=HOME=.*|Environment=HOME=$HOME|" \
-  -e "s|Environment=PATH=.*|Environment=PATH=$RUNTIME/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin|" \
+  -e "s|Environment=PATH=.*|Environment=PATH=$(dirname "$NODE"):$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin|" \
   "$UNIT_SOURCE" > "$UNIT_TARGET"
 chmod 0644 "$UNIT_TARGET"
 systemctl --user daemon-reload

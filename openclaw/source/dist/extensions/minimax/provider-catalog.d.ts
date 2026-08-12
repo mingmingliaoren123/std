@@ -1,2 +1,0 @@
-import { n as buildMinimaxProvider, r as resolveMinimaxCatalogBaseUrl, t as buildMinimaxPortalProvider } from "../../provider-catalog-BqNFTh-t.js";
-export { buildMinimaxPortalProvider, buildMinimaxProvider, resolveMinimaxCatalogBaseUrl };

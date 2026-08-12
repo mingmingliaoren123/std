@@ -7,8 +7,10 @@
   "published_at": "2026-08-04T00:41:26Z",
   "npm_integrity": "sha512-ycF3yPcbjN6bUPeaUx6Mh6vze1hQWoD3CT/wWcmD7a8xaHHHRUaAlaq+lFxMHf1ssEgODVAwjlzYqp2twkYZ7g==",
   "npm_tarball_sha256": "5bb525f36f471a41239615d321c441778c7e1c007018ed6d84b795be77803276",
-  "node_version": "22.22.3",
-  "node_archive_sha256": "1c4a9933a5e45bc88f54f70b5f91232c127ec49f1a5989d23fb85824c7adf9b7",
+  "node_version": "22.23.1",
+  "node_binary": "/usr/bin/node",
+  "node_runtime_source": "system-environment",
+  "historical_node_archive_sha256": "1c4a9933a5e45bc88f54f70b5f91232c127ec49f1a5989d23fb85824c7adf9b7",
   "platform": "linux-arm64",
-  "verified_at": "2026-08-10T18:24:00+08:00"
+  "verified_at": "2026-08-12T12:00:00+08:00"
 }

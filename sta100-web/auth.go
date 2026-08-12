@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -15,6 +16,8 @@ import (
 	"sync"
 	"time"
 )
+
+type authUsernameContextKey struct{}
 
 const (
 	authCookieName = "sta100_session"
@@ -322,10 +325,12 @@ func (a *authManager) sessionUsername(r *http.Request) (string, bool) {
 
 func (a *authManager) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := a.sessionUsername(r); !ok {
+		username, ok := a.sessionUsername(r)
+		if !ok {
 			writeAPIError(w, http.StatusUnauthorized, "AUTH_REQUIRED", "请先登录 STA-100")
 			return
 		}
-		next.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), authUsernameContextKey{}, username)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

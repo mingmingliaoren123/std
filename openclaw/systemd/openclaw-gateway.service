@@ -16,7 +16,7 @@ TimeoutStartSec=30
 SuccessExitStatus=0 143
 KillMode=control-group
 Environment=HOME=/home/User
-Environment=PATH=/home/User/gsx/gitdir/std/openclaw/runtime/bin:/home/User/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/usr/bin:/home/User/.local/bin:/usr/local/bin:/bin
 Environment=TMPDIR=/tmp
 Environment=OPENCLAW_GATEWAY_PORT=18789
 Environment=OPENCLAW_SYSTEMD_UNIT=openclaw-gateway.service

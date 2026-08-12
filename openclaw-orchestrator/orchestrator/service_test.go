@@ -59,6 +59,25 @@ func TestListConfiguredAgentsDoesNotExposeSecrets(t *testing.T) {
 	}
 }
 
+func TestListAgentsDecoratesSystemRoleFromManifest(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "openclaw.json")
+	manifestPath := filepath.Join(dir, "agents.json")
+	if err := os.WriteFile(configPath, []byte(`{"agents":{"list":[{"id":"main"},{"id":"sta100-coordinator"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(`{"schema_version":1,"agents":[{"id":"sta100-coordinator","name":"Coordinator","workspace":"workspace","role":"coordinator","visibility":"system"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	agents, err := New(Config{ConfigPath: configPath, Manifest: manifestPath}).ListAgents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 2 || agents[1].Role != "coordinator" || agents[1].Visibility != "system" {
+		t.Fatalf("system metadata not applied: %+v", agents)
+	}
+}
+
 func TestSetDefaultModelChecksAvailability(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "commands.log")
@@ -137,7 +156,7 @@ while [[ $# -gt 0 ]]; do
   fi
   shift
 done
-printf '%s' '{"runId":"run-1","status":"ok","result":{"payloads":[{"text":"真实回复"}]}}'
+printf '%s' '{"runId":"run-1","status":"ok","result":{"payloads":[{"text":"真实回复"}],"meta":{"agentMeta":{"usage":{"input":120,"output":30,"cacheRead":10,"cacheWrite":5,"total":165}}}}}'
 `)
 	service := New(Config{BinaryPath: script, ConfigPath: configPath})
 	secretMessage := "检查欧洲报价"
@@ -148,7 +167,7 @@ printf '%s' '{"runId":"run-1","status":"ok","result":{"payloads":[{"text":"真�
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Text != "真实回复" || result.RunID != "run-1" {
+	if result.Text != "真实回复" || result.RunID != "run-1" || result.Usage.Total != 165 || result.Usage.Input != 120 || result.Usage.Output != 30 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 	args, _ := os.ReadFile(argsPath)
@@ -189,7 +208,7 @@ func TestSyncAgentsUsesApplicationManifest(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := `{"schema_version":1,"workspace_root":"../workspaces","agents":[{"id":"export-agent","name":"出口业务助手","technical_name":"ExportAgent","emoji":"🛒","workspace":"export-agent"}]}`
+	manifest := `{"schema_version":1,"workspace_root":"../workspaces","agents":[{"id":"export-agent","name":"出口业务助手","technical_name":"ExportAgent","emoji":"🛒","workspace":"export-agent","role":"domain","visibility":"business","instructions":"# Operating rules\\n\\nUse supplied evidence only."}]}`
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +234,13 @@ exit 9
 	}
 	if !strings.Contains(string(identity), "ExportAgent") {
 		t.Fatalf("identity file missing technical name: %s", identity)
+	}
+	instructions, err := os.ReadFile(filepath.Join(workspaceRoot, "export-agent", "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(instructions), "Use supplied evidence only") {
+		t.Fatalf("instructions were not synchronized: %s", instructions)
 	}
 }
 

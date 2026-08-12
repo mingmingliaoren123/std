@@ -23,6 +23,9 @@ type ManifestAgent struct {
 	Emoji         string `json:"emoji"`
 	Workspace     string `json:"workspace"`
 	Model         string `json:"model,omitempty"`
+	Role          string `json:"role,omitempty"`
+	Visibility    string `json:"visibility,omitempty"`
+	Instructions  string `json:"instructions,omitempty"`
 }
 
 func LoadManifest(path string) (AgentManifest, error) {
@@ -43,6 +46,33 @@ func LoadManifest(path string) (AgentManifest, error) {
 		}
 	}
 	return manifest, nil
+}
+
+func (s *Service) decorateAgents(agents []Agent) []Agent {
+	manifest, err := LoadManifest(s.manifestPath)
+	if err != nil {
+		return agents
+	}
+	metadata := make(map[string]ManifestAgent, len(manifest.Agents))
+	for _, item := range manifest.Agents {
+		metadata[item.ID] = item
+	}
+	for index := range agents {
+		desired, ok := metadata[agents[index].ID]
+		if !ok {
+			continue
+		}
+		agents[index].Role = firstManifestValue(desired.Role, "domain")
+		agents[index].Visibility = firstManifestValue(desired.Visibility, "business")
+	}
+	return agents
+}
+
+func firstManifestValue(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(value)
 }
 
 func (s *Service) SyncAgents(ctx context.Context) ([]Agent, error) {
@@ -86,6 +116,12 @@ func (s *Service) SyncAgents(ctx context.Context) ([]Agent, error) {
 			}
 		} else if err != nil {
 			return nil, fmt.Errorf("inspect agent %s identity: %w", desired.ID, err)
+		}
+		if strings.TrimSpace(desired.Instructions) != "" {
+			instructions := strings.TrimSpace(desired.Instructions) + "\n"
+			if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte(instructions), 0o644); err != nil {
+				return nil, fmt.Errorf("write agent %s instructions: %w", desired.ID, err)
+			}
 		}
 
 		current, exists := existingByID[desired.ID]

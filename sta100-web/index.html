@@ -16,7 +16,7 @@
   <div class="app-shell" id="appShell" hidden>
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <img class="brand-app-icon" src="assets/cycling-agent-icon.jpg" alt="STA-100 骑行行业智能工作台">
+        <span class="brand-icon-frame"><img class="brand-app-icon" src="assets/cycling-agent-icon.jpg" alt="STA-100 骑行行业智能工作台"></span>
         <div class="brand-product">
           <strong>STA-100</strong>
           <span>骑行行业智能工作台</span>
@@ -40,18 +40,6 @@
         <button class="nav-item" data-page="settings"><span class="nav-emoji" aria-hidden="true">⚙️</span><span data-i18n="navSettings">设置</span></button>
       </nav>
 
-      <div class="sidebar-foot">
-        <div class="server-mini">
-          <span class="status-dot online"></span>
-          <div><strong data-i18n="serverOnline">服务在线</strong><span data-i18n="serverRegion">欧洲节点</span></div>
-          <span class="latency">38ms</span>
-        </div>
-        <button class="user-mini" data-action="lock">
-          <span class="avatar" id="sidebarAvatar">AD</span>
-          <span><strong id="sidebarUsername">admin</strong><small data-i18n="localAccount">本机账户</small></span>
-          <i data-lucide="lock-keyhole"></i>
-        </button>
-      </div>
     </aside>
 
     <div class="workspace">
@@ -61,6 +49,7 @@
           <span class="eyebrow" id="pageEyebrow">STA-100 / 工作台</span>
           <h1 id="pageTitle">📊 概览</h1>
         </div>
+        <img class="topbar-brand-logo" src="assets/red_logo.png" alt="STRATRONIX">
         <div class="topbar-actions">
           <label class="global-search">
             <i data-lucide="search"></i>
@@ -69,11 +58,22 @@
           </label>
           <button class="icon-button" data-action="refresh" aria-label="刷新" title="刷新"><i data-lucide="refresh-cw"></i></button>
           <button class="icon-button notification-button" data-action="notifications" aria-label="通知" title="通知"><i data-lucide="bell"></i><span></span></button>
+          <button class="token-usage-button" data-action="token-usage" title="查看智能体 Token 测试统计">
+            <i data-lucide="gauge"></i>
+            <span><small>Token 测试</small><strong id="tokenUsageTotal">0</strong></span>
+          </button>
           <div class="segmented language-switch" aria-label="语言">
             <button class="active" data-lang="zh">中</button><button data-lang="en">EN</button>
           </div>
+          <button class="topbar-user" data-action="lock" title="退出登录">
+            <span class="avatar" id="sidebarAvatar">AD</span>
+            <span class="topbar-user-copy"><strong id="sidebarUsername">admin</strong><small data-i18n="localAccount">本机账户</small></span>
+            <i data-lucide="log-out"></i>
+          </button>
         </div>
       </header>
+
+      <div class="ai-disclaimer" role="note"><i data-lucide="triangle-alert"></i><span>内容有AI生成，请仔细甄别</span></div>
 
       <main id="pageRoot" tabindex="-1"></main>
     </div>

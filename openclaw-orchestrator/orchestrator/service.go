@@ -111,6 +111,8 @@ type Agent struct {
 	Model         string `json:"model"`
 	Bindings      int    `json:"bindings"`
 	IsDefault     bool   `json:"isDefault"`
+	Role          string `json:"role,omitempty"`
+	Visibility    string `json:"visibility,omitempty"`
 }
 
 type AgentMessageInput struct {
@@ -122,11 +124,24 @@ type AgentMessageInput struct {
 }
 
 type AgentMessageResult struct {
-	AgentID    string `json:"agentId"`
-	SessionKey string `json:"sessionKey"`
-	Text       string `json:"text"`
-	RunID      string `json:"runId,omitempty"`
-	Status     string `json:"status"`
+	AgentID    string     `json:"agentId"`
+	SessionKey string     `json:"sessionKey"`
+	Text       string     `json:"text"`
+	RunID      string     `json:"runId,omitempty"`
+	Status     string     `json:"status"`
+	Usage      TokenUsage `json:"usage"`
+}
+
+type TokenUsage struct {
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+	Total      int64 `json:"total"`
+}
+
+func (u TokenUsage) Available() bool {
+	return u.Input > 0 || u.Output > 0 || u.CacheRead > 0 || u.CacheWrite > 0 || u.Total > 0
 }
 
 type commandError struct {
@@ -341,7 +356,7 @@ func (s *Service) SaveAPIKey(ctx context.Context, provider, apiKey string) (stri
 
 func (s *Service) ListAgents(ctx context.Context) ([]Agent, error) {
 	if agents, err := s.listConfiguredAgents(); err == nil {
-		return agents, nil
+		return s.decorateAgents(agents), nil
 	}
 	out, err := s.run(ctx, nil, "agents", "list", "--json")
 	if err != nil {
@@ -351,7 +366,7 @@ func (s *Service) ListAgents(ctx context.Context) ([]Agent, error) {
 	if err := json.Unmarshal(out, &agents); err != nil {
 		return nil, fmt.Errorf("%w: agents list: %v", ErrInvalidResponse, err)
 	}
-	return agents, nil
+	return s.decorateAgents(agents), nil
 }
 
 func (s *Service) SendAgentMessage(ctx context.Context, input AgentMessageInput) (AgentMessageResult, error) {
@@ -441,6 +456,19 @@ func buildAgentMessage(input AgentMessageInput) string {
 }
 
 func parseAgentMessageResult(out []byte) (AgentMessageResult, error) {
+	type rawUsage struct {
+		Input       int64 `json:"input"`
+		Output      int64 `json:"output"`
+		CacheRead   int64 `json:"cacheRead"`
+		CacheWrite  int64 `json:"cacheWrite"`
+		Total       int64 `json:"total"`
+		TotalTokens int64 `json:"totalTokens"`
+	}
+	type rawMeta struct {
+		AgentMeta struct {
+			Usage rawUsage `json:"usage"`
+		} `json:"agentMeta"`
+	}
 	var raw struct {
 		RunID   string `json:"runId"`
 		Status  string `json:"status"`
@@ -449,10 +477,12 @@ func parseAgentMessageResult(out []byte) (AgentMessageResult, error) {
 			Payloads []struct {
 				Text string `json:"text"`
 			} `json:"payloads"`
+			Meta rawMeta `json:"meta"`
 		} `json:"result"`
 		Payloads []struct {
 			Text string `json:"text"`
 		} `json:"payloads"`
+		Meta rawMeta `json:"meta"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return AgentMessageResult{}, fmt.Errorf("%w: agent result: %v", ErrInvalidResponse, err)
@@ -474,7 +504,21 @@ func parseAgentMessageResult(out []byte) (AgentMessageResult, error) {
 	if status == "" {
 		status = "ok"
 	}
-	return AgentMessageResult{Text: text, RunID: raw.RunID, Status: status}, nil
+	usage := raw.Result.Meta.AgentMeta.Usage
+	if usage.Input == 0 && usage.Output == 0 && usage.CacheRead == 0 && usage.CacheWrite == 0 && usage.Total == 0 && usage.TotalTokens == 0 {
+		usage = raw.Meta.AgentMeta.Usage
+	}
+	total := usage.Total
+	if total == 0 {
+		total = usage.TotalTokens
+	}
+	if total == 0 {
+		total = usage.Input + usage.Output + usage.CacheRead + usage.CacheWrite
+	}
+	return AgentMessageResult{
+		Text: text, RunID: raw.RunID, Status: status,
+		Usage: TokenUsage{Input: usage.Input, Output: usage.Output, CacheRead: usage.CacheRead, CacheWrite: usage.CacheWrite, Total: total},
+	}, nil
 }
 
 func (s *Service) listConfiguredAgents() ([]Agent, error) {

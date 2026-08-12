@@ -12,9 +12,13 @@ const state = {
   quoteStatus: 'all',
   quoteView: 'table',
   quoteSort: { field: 'value', direction: 'desc' },
+  quoteDateFrom: '',
+  quoteDateTo: '',
   orderSearch: '',
   orderStatus: 'all',
   orderSort: { field: 'value', direction: 'desc' },
+  orderDateFrom: '',
+  orderDateTo: '',
   documentSearch: '',
   documentType: 'all',
   documentStatus: 'all',
@@ -60,10 +64,23 @@ const state = {
     quotes: new Set(),
     orders: new Set(),
   },
+  customerVisibleColumns: new Set(['customer','type','country','contact','orders','total','rating','updated']),
+  customerCommunications: {},
   quoteDraftLines: [],
   orderDraftLines: [],
   templateUploads: [],
   templateKind: 'document',
+  selectedUploadFile: null,
+  selectedUpgradeFile: null,
+  systemHealth: null,
+  systemHealthLoading: false,
+  lastAgentBackup: null,
+  overviewDataStatus: '',
+  lastWeeklyReport: null,
+  assistantResults: {},
+  tokenUsage: null,
+  commandSearchSeq: 0,
+  businessDataLoaded: false,
 };
 
 const authState = {
@@ -198,6 +215,9 @@ const files = [
   { name: 'Shimano_Compatibility_List.xlsx', category: '产品资料', tags: ['兼容', '组件'], size: '846 KB', source: '客户上传', status: 'Review', updated: '2026-08-08 18:33' },
 ];
 
+const scheduledJobs = [];
+const boundPlugins = [];
+
 const news = [
   { category: '欧洲市场', title: '欧洲自行车产业进入补库存周期，渠道更关注小批量和快速交付', summary: '多家欧洲经销商在 2026 年下半年调整采购节奏，订单结构从大批量预采转向小批量、多批次。', source: 'Bike Europe', time: '2026-08-10 09:10', relevance: '96%' },
   { category: '法规', title: '欧盟更新电池尽职调查实施指引，E-bike 供应链资料需同步准备', summary: '新指引强化材料来源、碳足迹和供应链证明要求。', source: 'EUR-Lex', time: '2026-08-10 08:35', relevance: '93%' },
@@ -206,26 +226,12 @@ const news = [
   { category: '产品', title: '欧洲城市通勤市场对轻量化 E-bike 的关注持续上升', summary: '重量、可维护性和电池合规成为渠道选品主要指标。', source: 'E-bike News', time: '2026-08-09 11:05', relevance: '82%' },
 ];
 
-const oemFactories = [
-  { name: '苏州骑行动力科技', category: 'E-bike 电池', city: '苏州', tier: 'S', score: 94, capacity: '30,000 组/月', moq: '100 组', source: '本地知识库', reason: '已有欧洲电池产品出货记录，MOQ 与当前需求匹配' },
-  { name: '宁波远行整车制造', category: '公路/山地整车', city: '宁波', tier: 'A', score: 91, capacity: '12,000 台/月', moq: '300 台', source: '联网检索', reason: '联网公开资料经检索整理后显示具备整车研发和小批量 OEM 能力' },
-  { name: '东莞骑迹智能装备', category: '码表/智能设备', city: '东莞', tier: 'A', score: 88, capacity: '8,000 台/月', moq: '200 台', source: '联网检索', reason: '联网公开资料显示支持 ANT+/BLE 产品和 ODM 服务' },
-  { name: '厦门轻量运动用品', category: '头盔/骑行装备', city: '厦门', tier: 'B', score: 84, capacity: '50,000 件/月', moq: '500 件', source: '本地知识库 + 联网检索', reason: '本地档案结合联网资料后显示装备类目覆盖完整' },
-  { name: '常州链动传动系统', category: '链条/传动', city: '常州', tier: 'B', score: 81, capacity: '80,000 件/月', moq: '1,000 件', source: '联网检索', reason: '联网行业资料较完整，认证和实际交付仍需复核' },
-];
+// 业务内容只以登录后 bootstrap 返回的数据为准，接口失败时保持空状态。
+[recommendations, customers, quotes, orders, documents, products, suppliers, files, news].forEach(records => records.splice(0));
+metrics.forEach(metric => { metric.value = 0; });
 
-const unifiedSearchCustomers = [
-  { name: 'VeloTrade GmbH', country: '德国', type: 'Distributor', contact: 'anna@velotrade.example', business: 'E-bike / 经销商', source: '本地知识库', score: 96 },
-  { name: 'Nordic Cycle AB', country: '瑞典', type: 'Importer', contact: '+46 8 410 2250', business: '城市车 / 进口商', source: '本地知识库 + 联网检索', score: 91 },
-  { name: 'Berlin Motion Handels', country: '德国', type: 'Prospect', contact: 'sales@berlinmotion.example', business: '智能骑行 / 零售渠道', source: '联网检索', score: 88 },
-  { name: 'Ciclo Verde S.L.', country: '西班牙', type: 'Dealer', contact: 'contact@cicloverde.example', business: '公路车 / 车店', source: '联网检索', score: 83 },
-];
-
-const localDiscoveryLeads = [
-  { name: 'Berlin Motion Handels', city: '柏林', country: '德国', type: 'Distributor', contact: 'sales@berlinmotion.example', score: 93, reason: '公开渠道显示具备 E-bike 区域经销网络' },
-  { name: 'Rheinland Cycle Network', city: '科隆', country: '德国', type: 'Importer', contact: '+49 221 555 0142', score: 88, reason: '进口业务与产品资料需求和当前目标匹配' },
-  { name: 'München Bike Lab', city: '慕尼黑', country: '德国', type: 'Dealer', contact: 'hello@munichbikelab.example', score: 82, reason: '高端智能骑行产品门店，适合小批测试' },
-];
+const unifiedSearchCustomers = [];
+const localDiscoveryLeads = [];
 
 const discoveryCities = {
   中国: ['北京','上海','广州','深圳','杭州','成都','重庆','苏州','宁波','厦门','东莞','天津','青岛','武汉','西安'],
@@ -270,7 +276,7 @@ function renderAuthScreen() {
   const body = loginView ? `<form class="auth-form" id="loginForm"><div class="form-field"><label for="loginUsername">登录用户名</label><input class="input" id="loginUsername" value="${escapeAttr(authState.username)}" readonly></div><div class="form-field"><label for="loginPassword">密码</label><input class="input" id="loginPassword" type="password" autocomplete="current-password" autofocus required></div><div id="authMessage" class="auth-message">${escapeHTML(authState.message)}</div><button class="button primary" type="submit">${icon('log-in')}登录</button><div class="auth-actions"><span class="secondary-text">本机账户</span><button class="auth-link" type="button" id="forgotPassword">忘记密码？</button></div></form>`
     : masterView ? `<form class="auth-form" id="masterForm"><div class="auth-back"><button class="auth-link" type="button" id="backToLogin">${icon('arrow-left')}返回登录</button></div><div class="form-field"><label for="masterPassword">万能密码</label><input class="input" id="masterPassword" type="password" autocomplete="off" autofocus required></div><div id="authMessage" class="auth-message">${escapeHTML(authState.message)}</div><button class="button primary" type="submit">${icon('shield-check')}验证并重置</button><p class="auth-note">仅用于设备维护。验证通过后可重新设置当前本机账户的用户名和密码。</p></form>`
     : `<form class="auth-form" id="resetForm"><div class="auth-back"><button class="auth-link" type="button" id="backToMaster">${icon('arrow-left')}返回上一步</button></div><div class="form-field"><label for="resetUsername">新用户名</label><input class="input" id="resetUsername" value="${escapeAttr(authState.username)}" autocomplete="username" required></div><div class="form-field"><label for="resetPassword">新密码</label><input class="input" id="resetPassword" type="password" autocomplete="new-password" minlength="4" required></div><div class="form-field"><label for="resetPasswordConfirm">确认新密码</label><input class="input" id="resetPasswordConfirm" type="password" autocomplete="new-password" minlength="4" required></div><div id="authMessage" class="auth-message">${escapeHTML(authState.message)}</div><button class="button primary" type="submit">${icon('key-round')}保存并进入工作台</button></form>`;
-  screen.innerHTML = `<section class="auth-card"><header class="auth-head"><div class="auth-brand"><img src="assets/cycling-agent-icon.jpg" alt="STA-100"><div><strong>STA-100</strong><span>骑行行业智能工作台</span></div></div><h1 id="authTitle">${loginView ? '登录工作台' : resetView ? '重置本机账户' : '账户恢复'}</h1><p>${loginView ? `请输入 ${escapeHTML(authState.username)} 的密码继续使用。` : resetView ? '请设置新的用户名和登录密码。' : '请输入设备维护万能密码进入重置流程。'}</p></header><div class="auth-body">${body}</div></section>`;
+  screen.innerHTML = `<section class="auth-card"><header class="auth-head"><div class="auth-brand"><span class="auth-brand-icon"><img src="assets/cycling-agent-icon.jpg" alt="STA-100"></span><div><strong>STA-100</strong><span>骑行行业智能工作台</span></div></div><h1 id="authTitle">${loginView ? '登录工作台' : resetView ? '重置本机账户' : '账户恢复'}</h1><p>${loginView ? `请输入 ${escapeHTML(authState.username)} 的密码继续使用。` : resetView ? '请设置新的用户名和登录密码。' : '请输入设备维护万能密码进入重置流程。'}</p></header><div class="auth-body">${body}</div></section>`;
   applyIcons();
   document.getElementById('loginForm')?.addEventListener('submit', event => { event.preventDefault(); void loginUser(); });
   document.getElementById('masterForm')?.addEventListener('submit', event => { event.preventDefault(); void verifyMasterPassword(); });
@@ -283,7 +289,7 @@ async function loadAuthCredentials() {
   try {
     const status = await apiFetch('/api/v1/auth/status');
     authState.username = status.username || 'admin';
-    if (status.authenticated) showAuthenticatedApp();
+    if (status.authenticated) await showAuthenticatedApp();
   } catch {
     authState.username = 'admin';
   }
@@ -296,12 +302,13 @@ function updateSidebarIdentity() {
   if (name) name.textContent = username;
   if (avatar) avatar.textContent = username.slice(0, 2).toUpperCase();
 }
-function showAuthenticatedApp() {
+async function showAuthenticatedApp() {
   authState.authenticated = true;
   document.getElementById('authScreen').hidden = true;
   document.getElementById('appShell').hidden = false;
   updateSidebarIdentity();
   setPage(state.page);
+  await Promise.all([loadBusinessData(), loadTokenUsage()]);
 }
 async function logoutUser() {
   try { await apiFetch('/api/v1/auth/logout', { method: 'POST', body: '{}' }); } catch { /* session may already be expired */ }
@@ -321,7 +328,7 @@ async function loginUser() {
     const result = await apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username: authState.username, password }) });
     authState.username = result.username || authState.username;
     authMessage('');
-    showAuthenticatedApp();
+    await showAuthenticatedApp();
   } catch (error) {
     authMessage(error.message || '用户名或密码不正确。');
     document.getElementById('loginPassword')?.focus();
@@ -347,7 +354,7 @@ async function resetCredentials() {
   try {
     const result = await apiFetch('/api/v1/auth/reset', { method: 'POST', body: JSON.stringify({ masterPassword: authState.masterPassword, username, password }) });
     authState.username = result.username || username; authState.masterPassword = ''; authState.mode='login'; authMessage('');
-    showAuthenticatedApp();
+    await showAuthenticatedApp();
     toast('账户已重置', `当前用户名已更新为 ${authState.username}。`, 'success');
   } catch (error) {
     authState.masterPassword = '';
@@ -397,13 +404,162 @@ function applyTranslations() {
 
 async function apiFetch(path, options = {}) {
   const headers = { Accept: 'application/json', ...(options.headers || {}) };
-  if (options.body) headers['Content-Type'] = 'application/json';
+  if (options.body && !(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
   if (options.method && options.method !== 'GET') headers['X-STA100-Request'] = '1';
   const response = await fetch(path, { ...options, headers });
   let data = null;
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) throw new Error(data?.error?.message || `请求失败 (${response.status})`);
   return data;
+}
+
+function replaceRecords(target, records) {
+  target.splice(0, target.length, ...(Array.isArray(records) ? records : []));
+}
+
+function upsertRecord(records, record) {
+  const index = records.findIndex(item => item.id === record.id);
+  if (index >= 0) records.splice(index, 1, record);
+  else records.unshift(record);
+}
+
+function removeRecord(records, id) {
+  const index = records.findIndex(item => item.id === id);
+  if (index >= 0) records.splice(index, 1);
+}
+
+async function loadBusinessData(force = false) {
+  if (state.businessDataLoaded && !force) return;
+  try {
+    const data = await apiFetch('/api/v1/bootstrap');
+    replaceRecords(customers, data.customers);
+    replaceRecords(quotes, data.quotes);
+    replaceRecords(orders, data.orders);
+    replaceRecords(documents, data.documents);
+    replaceRecords(products, data.products);
+    replaceRecords(suppliers, data.suppliers);
+    replaceRecords(files, data.files);
+    replaceRecords(news, data.news);
+    replaceRecords(recommendations, data.recommendations);
+    replaceRecords(scheduledJobs, data.jobs);
+    replaceRecords(boundPlugins, data.plugins);
+    replaceRecords(unifiedSearchCustomers, []);
+    replaceRecords(localDiscoveryLeads, []);
+    const overview = data.overview || {};
+    metrics.forEach(metric => {
+      if (Number.isFinite(Number(overview[metric.key]))) metric.value = Number(overview[metric.key]);
+    });
+    state.overviewDataStatus = overview.dataStatus || '';
+    const preferences = data.preferences || {};
+    state.subscription = preferences.recommendationEnabled ?? state.subscription;
+    state.newsShowLimit = preferences.newsShowLimit || state.newsShowLimit;
+    state.newsFrequency = preferences.newsFrequency || state.newsFrequency;
+    state.newsCountries = preferences.newsCountries || state.newsCountries;
+    state.newsTopics = preferences.newsTopics || state.newsTopics;
+    state.newsSources = preferences.newsSources || state.newsSources;
+    state.agentInternetAllowlists = preferences.agentAllowlists || state.agentInternetAllowlists;
+    state.businessDataLoaded = true;
+    renderPage();
+  } catch (error) {
+    toast('业务数据读取失败', error.message, 'warning');
+  }
+}
+
+function currentPreferences() {
+  return { recommendationEnabled:state.subscription, newsShowLimit:state.newsShowLimit, newsFrequency:state.newsFrequency, newsCountries:state.newsCountries, newsTopics:state.newsTopics, newsSources:state.newsSources, agentAllowlists:state.agentInternetAllowlists };
+}
+
+async function savePreferences() {
+  return apiFetch('/api/v1/settings/preferences',{method:'PATCH',body:JSON.stringify(currentPreferences())});
+}
+
+async function refreshBusinessData() {
+  try { await Promise.all([loadBusinessData(true), loadTokenUsage()]); toast('刷新完成','页面已从本地业务数据库重新读取。'); }
+  catch(error) { toast('刷新失败',error.message,'warning'); }
+}
+
+function formatTokenCount(value) {
+  return Number(value || 0).toLocaleString('zh-CN');
+}
+
+function applyTokenUsage(usage) {
+  if (usage) state.tokenUsage = usage;
+  const target = document.getElementById('tokenUsageTotal');
+  if (target) target.textContent = formatTokenCount(state.tokenUsage?.total || 0);
+}
+
+async function loadTokenUsage() {
+  try {
+    applyTokenUsage(await apiFetch('/api/v1/agent-token-usage'));
+  } catch (error) {
+    applyTokenUsage(null);
+    toast('Token 统计读取失败', error.message, 'warning');
+  }
+}
+
+function openTokenUsage() {
+  const usage = state.tokenUsage || {input:0,output:0,cacheRead:0,cacheWrite:0,total:0,calls:0,measuredCalls:0,unavailableCalls:0,currentRequestTotal:0,byAgent:[]};
+  const agents = usage.byAgent || [];
+  openModal({title:'智能体 Token 测试统计',eyebrow:'测试工具 / 实际模型用量',wide:true,body:`
+    <div class="token-metrics">
+      <div class="token-metric"><span>累计 Token</span><strong>${formatTokenCount(usage.total)}</strong></div>
+      <div class="token-metric"><span>输入 Token</span><strong>${formatTokenCount(usage.input)}</strong></div>
+      <div class="token-metric"><span>输出 Token</span><strong>${formatTokenCount(usage.output)}</strong></div>
+      <div class="token-metric"><span>最近一次请求</span><strong>${formatTokenCount(usage.currentRequestTotal)}</strong></div>
+    </div>
+    <div class="token-test-note">该面板仅用于前期测试。统计值来自 OpenClaw 返回的模型 usage，不根据文本长度估算；缓存读取 ${formatTokenCount(usage.cacheRead)}，缓存写入 ${formatTokenCount(usage.cacheWrite)}。共 ${formatTokenCount(usage.calls)} 次 Agent 调用，其中 ${formatTokenCount(usage.measuredCalls)} 次返回有效用量，${formatTokenCount(usage.unavailableCalls)} 次未返回用量。</div>
+    <div class="token-agent-list">
+      <div class="token-agent-row header"><span>Agent</span><span>调用</span><span>输入</span><span>输出</span><span>总计</span></div>
+      ${agents.length ? agents.map(item=>`<div class="token-agent-row"><strong>${escapeHTML(item.agentId)}</strong><span>${formatTokenCount(item.calls)}${item.unavailableCalls?` <small class="unavailable">(${formatTokenCount(item.unavailableCalls)} 未返回)</small>`:''}</span><span>${formatTokenCount(item.input)}</span><span>${formatTokenCount(item.output)}</span><span>${formatTokenCount(item.total)}</span></div>`).join('') : '<div class="empty-state"><div><h3>暂无 Token 统计</h3><p>完成一次可用的智能体调用后显示提供商返回的实际用量。</p></div></div>'}
+    </div>`,footer:`<button class="button danger" data-action="clear-token-usage">${icon('trash-2')}清空测试统计</button><button class="button" data-action="refresh-token-usage">${icon('refresh-cw')}刷新</button><button class="button primary" data-action="close-modal">关闭</button>`});
+}
+
+async function clearTokenUsage() {
+  if (!window.confirm('确定清空当前 Token 测试统计吗？该操作不会删除 Agent 会话。')) return;
+  try {
+    await apiFetch('/api/v1/agent-token-usage',{method:'DELETE'});
+    await loadTokenUsage();
+    closeModal();
+    toast('Token 测试统计已清空','Agent 会话和业务数据未受影响。');
+  } catch(error) { toast('清空失败',error.message,'warning'); }
+}
+
+async function runOEMMatch() {
+  state.oemQuery=document.getElementById('oemQuery')?.value.trim()||'';
+  state.oemCategory=document.getElementById('oemCategory')?.value||state.oemCategory;
+  if(!state.oemQuery){toast('请输入匹配需求','产品、数量、市场或规格至少需要一项。','warning');return;}
+  const target=document.getElementById('oemResults');if(target)target.innerHTML=`<div class="tool-empty">${icon('loader-circle')} 正在整理本地证据并调用专业智能体...</div>`;applyIcons();
+  try {
+    const result=await apiFetch('/api/v1/assistant/query',{method:'POST',body:JSON.stringify({page:'overview',feature:'oem-match',message:state.oemQuery,sessionKey:'sta100-overview-oem',context:{category:state.oemCategory,sort:state.oemSort,top:state.oemTop}})});
+    state.assistantResults.oem=result;applyTokenUsage(result.tokenUsage);renderPage();toast(result.partial?'OEM 匹配返回部分结果':'OEM 匹配完成',`${result.usedAgents.length} 个 Agent 参与处理。`,result.partial?'warning':'success');
+  } catch(error) { toast('OEM 匹配失败',error.message,'warning'); }
+}
+
+async function runUnifiedCustomerSearch() {
+  state.customerSearchQuery=document.getElementById('unifiedCustomerQuery')?.value.trim()||'';
+  state.customerHasContact=Boolean(document.getElementById('hasContactOnly')?.checked);
+  const target=document.getElementById('unifiedCustomerResults');if(target)target.innerHTML=`<div class="tool-empty">${icon('loader-circle')} 正在执行统一智能搜索...</div>`;applyIcons();
+  try {
+    const result=await apiFetch('/api/v1/assistant/query',{method:'POST',body:JSON.stringify({page:'overview',feature:'customer-search',message:state.customerSearchQuery||'查询客户',sessionKey:'sta100-overview-customer-search',context:{hasContact:state.customerHasContact}})});
+    replaceRecords(unifiedSearchCustomers,result.items);state.assistantResults.customerSearch=result;applyTokenUsage(result.tokenUsage);renderPage();toast(result.partial?'客户搜索返回部分结果':'客户搜索完成',`返回 ${result.items.length} 条记录，${result.usedAgents.length} 个 Agent 参与。`,result.partial?'warning':'success');
+  } catch(error) { toast('客户搜索失败',error.message,'warning'); }
+}
+
+async function runLocalDiscovery() {
+  state.discoveryCountry=document.getElementById('discoveryCountry')?.value||state.discoveryCountry;
+  state.discoveryCity=document.getElementById('discoveryCity')?.value||state.discoveryCity;
+  state.discoveryType=document.getElementById('discoveryType')?.value||state.discoveryType;
+  const target=document.getElementById('localDiscoveryResults');if(target)target.innerHTML=`<div class="tool-empty">${icon('loader-circle')} 正在整理本地证据并分析客户线索...</div>`;applyIcons();
+  try {
+    const message=`发现 ${state.discoveryCountry} ${state.discoveryCity} 的 ${state.discoveryType} 客户`;
+    const result=await apiFetch('/api/v1/assistant/query',{method:'POST',body:JSON.stringify({page:'overview',feature:'customer-discovery',message,sessionKey:'sta100-overview-customer-discovery',context:{country:state.discoveryCountry,city:state.discoveryCity,type:state.discoveryType,hasContact:false}})});
+    replaceRecords(localDiscoveryLeads,result.items);state.assistantResults.customerDiscovery=result;applyTokenUsage(result.tokenUsage);renderPage();toast(result.partial?'客户发现返回部分结果':'客户发现完成',`${result.usedAgents.length} 个 Agent 参与处理。`,result.partial?'warning':'success');
+  } catch(error) { toast('客户发现失败',error.message,'warning'); }
+}
+
+async function backupAgents() {
+  try { const result=await apiFetch('/api/v1/agent-backups',{method:'POST',body:'{}'}); state.lastAgentBackup=result; if(state.page==='settings')renderPage(); toast('智能体备份完成',`${result.path} · ${formatBytes(result.bytes)}`); }
+  catch(error) { toast('智能体备份失败',error.message,'warning'); }
 }
 
 async function loadOpenClawStatus(force = false) {
@@ -455,6 +611,21 @@ async function loadOpenClawAgents(force = false) {
   return state.openClawAgents;
 }
 
+async function loadSystemHealth(force = false) {
+  if (state.systemHealthLoading || (state.systemHealth && !force)) return state.systemHealth;
+  state.systemHealthLoading = true;
+  if (state.page === 'settings' && state.settingsTab === 'system') renderPage();
+  try {
+    state.systemHealth = await apiFetch('/api/v1/system/health');
+  } catch (error) {
+    state.systemHealth = { status: 'error', error: error.message };
+  } finally {
+    state.systemHealthLoading = false;
+    if (state.page === 'settings' && state.settingsTab === 'system') renderPage();
+  }
+  return state.systemHealth;
+}
+
 function loadPageOpenClawData() {
   if (state.page === 'agents') void loadOpenClawAgents();
   if (state.page !== 'settings') return;
@@ -462,6 +633,7 @@ function loadPageOpenClawData() {
   if (state.settingsTab === 'system') {
     void loadOpenClawStatus();
     void loadOpenClawAgents();
+    void loadSystemHealth();
   }
 }
 
@@ -519,10 +691,10 @@ function renderOverview() {
       </aside>
     </section>
 
-    <div class="section-head tool-section-head"><div><h3>🛠️ 智能业务工具</h3><p>保留原应用的 OEM 匹配、客户统一搜索和本地客户发现能力。</p></div><span class="meta">本地知识库优先 · 来源分别展示</span></div>
+    <div class="section-head tool-section-head"><div><h3>🛠️ 智能业务工具</h3><p>由本地证据整理器、领域智能体和任务协调器共同完成信息整合。</p></div><span class="meta">统一结果 · 冲突信息并列保留</span></div>
     <section class="tool-grid">
       <article class="panel tool-panel tool-panel-wide">
-        <header class="tool-header"><div><h3>🏭 OEM 工厂智能匹配</h3><p>按骑行类目融合本地知识库与联网检索；RAG 是检索实现方式，不单独作为数据来源。</p></div><span class="badge amber">规则 TODO</span></header>
+        <header class="tool-header"><div><h3>🏭 OEM 工厂智能匹配</h3><p>用户输入需求后，系统先整理本地证据，再由协调器分发领域智能体并汇总。</p></div><span class="badge amber">数据待补充</span></header>
         <div class="panel-body">
           <div class="filter-row tool-presets">${['公路整车 OEM 1000 台','E-bike 电池 OEM 100 组','中置电机 500 套','头盔 MIPS 500 个'].map(v=>`<button class="filter-chip" data-action="oem-preset" data-value="${v}">${v}</button>`).join('')}</div>
           <div class="tool-form">
@@ -532,21 +704,20 @@ function renderOverview() {
             <select class="select" id="oemTop"><option value="3" ${state.oemTop===3?'selected':''}>Top 3</option><option value="5" ${state.oemTop===5?'selected':''}>Top 5</option><option value="10" ${state.oemTop===10?'selected':''}>Top 10</option></select>
             <button class="button primary" data-action="oem-run">${icon('scan-search')}开始匹配</button>
           </div>
-          <div class="source-legend"><span>${icon('hard-drive')}本地知识库</span><span>${icon('globe-2')}联网检索（RAG 检索 + 公开网络采集）</span><small>正式分类和评分权重待数据提供后确认</small></div>
+          <div class="agent-chain-note"><span class="agent-icon">${icon('workflow')}</span><span><strong>本地证据 → 任务协调器 → OEM 领域智能体 → 统一汇总</strong><small>正式工厂数据、分类和评分规则待提供；冲突信息全部保留。</small></span></div>
           <div class="tool-results" id="oemResults">${renderOEMCards()}</div>
         </div>
       </article>
 
       <article class="panel tool-panel">
-        <header class="tool-header"><div><h3>🔍 客户统一搜索</h3><p>统一字段检索本地知识库和联网信息，默认使用本地知识库。</p></div></header>
+        <header class="tool-header"><div><h3>🔍 客户统一搜索</h3><p>统一检索本地业务记录和后续可接入的私有知识，结果由智能体整合展示。</p></div></header>
         <div class="panel-body">
           <div class="tool-form compact">
             <label class="field-search tool-query">${icon('search')}<input id="unifiedCustomerQuery" value="${escapeAttr(state.customerSearchQuery)}" placeholder="国家、公司、业务、邮箱或电话"></label>
-            <select class="select" id="unifiedSearchMode"><option value="local" ${state.customerSearchMode==='local'?'selected':''}>本地知识库（默认）</option><option value="rag" ${state.customerSearchMode==='rag'?'selected':''}>联网检索</option><option value="hybrid" ${state.customerSearchMode==='hybrid'?'selected':''}>本地知识库 + 联网检索</option></select>
             <label class="contact-check"><input class="checkbox" id="hasContactOnly" type="checkbox" ${state.customerHasContact?'checked':''}> 必有联系方式</label>
             <button class="button primary" data-action="unified-customer-search">${icon('search')}搜索</button>
           </div>
-          <div class="source-legend"><span>${icon('database')}本地知识库</span><span>${icon('globe-2')}联网检索</span><small>联系方式包含邮箱、电话、网站及其它通讯方式</small></div>
+          <div class="agent-chain-note"><span class="agent-icon">${icon('workflow')}</span><span><strong>用户输入 → 本地证据整理 → 协调器分发 → 客户结果汇总</strong><small>联系方式包含邮箱、电话、网站及其它通讯方式。</small></span></div>
           <div class="tool-results customer-result-list" id="unifiedCustomerResults">${renderUnifiedCustomerCards()}</div>
         </div>
       </article>
@@ -568,23 +739,15 @@ function renderOverview() {
   </div>`;
 }
 
-function sortedOEMFactories() {
-  const query = `${state.oemQuery} ${state.oemCategory === '全部骑行类目' ? '' : state.oemCategory}`.toLowerCase();
-  const result = oemFactories.filter(f => {
-    const matchesCategory = state.oemCategory === '全部骑行类目' || f.category.includes(state.oemCategory) || (state.oemCategory === '整车' && f.category.includes('整车'));
-    const tokens = query.split(/\s+/).filter(token => token.length > 1 && !['oem','台','组','套','个'].includes(token));
-    const matchesQuery = !tokens.length || tokens.some(token => `${f.name} ${f.category} ${f.city} ${f.reason}`.toLowerCase().includes(token)) || state.oemQuery.includes('OEM');
-    return matchesCategory && matchesQuery;
-  });
-  if (state.oemSort === 'score') result.sort((a,b)=>b.score-a.score);
-  if (state.oemSort === 'capacity') result.sort((a,b)=>parseInt(b.capacity.replace(/\D/g,''))-parseInt(a.capacity.replace(/\D/g,'')));
-  if (state.oemSort === 'moq') result.sort((a,b)=>parseInt(a.moq)-parseInt(b.moq));
-  if (state.oemSort === 'source') result.sort((a,b)=>a.source.localeCompare(b.source,'zh-CN'));
-  return result.slice(0, state.oemTop);
+function renderOEMCards() {
+  const result=state.assistantResults.oem;
+  if(!result)return `<div class="tool-empty">正式工厂原始数据、骑行类目和评分规则尚未提供。可先提交需求，由系统基于现有证据和专业智能体返回部分分析。</div>`;
+  return renderAssistantSummary(result,'OEM 匹配分析');
 }
 
-function renderOEMCards() {
-  return `<div class="match-grid">${sortedOEMFactories().map((f,i)=>`<article class="match-card"><div class="match-rank"><strong>TOP ${i+1}</strong><span>Tier ${f.tier}</span></div><div class="match-copy"><div class="spread"><h4>${f.name}</h4><strong class="match-score">${f.score}<small>分</small></strong></div><p>${f.category} · ${f.city}</p><div class="match-facts"><span>产能 <strong>${f.capacity}</strong></span><span>MOQ <strong>${f.moq}</strong></span></div><div class="match-reason">${f.reason}</div><div class="spread"><span class="badge ${f.source.includes('联网')?'blue':'green'}">${f.source}</span><button class="link-button" data-action="oem-detail" data-name="${f.name}">查看详情</button></div></div></article>`).join('')}</div><div class="tool-result-footer"><span>已统一为工厂、类目、城市、产能、MOQ、匹配分和来源字段</span><button class="button small" data-action="oem-export">${icon('file-down')}导出匹配报告</button></div>`;
+function renderAssistantSummary(result,title) {
+  const agents=(result.usedAgents||[]).join('、')||'无成功调用';
+  return `<article class="assistant-summary"><div class="spread"><strong>${escapeHTML(title)}</strong><span class="badge ${result.partial?'amber':'green'}">${result.partial?'部分结果':'已完成'}</span></div><p>${escapeHTML(result.text||'暂无汇总文本').replace(/\n/g,'<br>')}</p><div class="source-line"><span class="mini-source">参与 Agent <strong>${escapeHTML(agents)}</strong></span><span class="mini-source">本地证据 <strong>${result.evidence?.length||0} 条</strong></span><span class="mini-source">冲突 <strong>${result.conflicts?.length||0} 组</strong></span></div></article>`;
 }
 
 function renderUnifiedCustomerCards() {
@@ -593,36 +756,36 @@ function renderUnifiedCustomerCards() {
     const tokens = state.customerSearchQuery.toLowerCase().split(/\s+/).filter(token => token.length > 1);
     const matchesQuery = !tokens.length || tokens.some(token => text.includes(token));
     const matchesContact = !state.customerHasContact || Boolean(r.contact);
-    const matchesMode = state.customerSearchMode === 'hybrid' || (state.customerSearchMode === 'local' ? r.source === '本地知识库' : r.source.includes('联网检索'));
-    return matchesQuery && matchesContact && matchesMode;
+    return matchesQuery && matchesContact;
   });
-  return rows.slice(0,3).map(r=>`<article class="customer-match-row"><span class="match-score">${r.score}<small>分</small></span><span class="customer-match-copy"><strong>${r.name}</strong><small>${r.country} · ${r.type} · ${r.business}</small><em>${icon('contact-round')} ${r.contact}</em></span><span class="badge ${r.source.includes('联网检索')?'blue':'green'}">${r.source}</span><button class="table-icon" data-action="unified-customer-detail" data-name="${r.name}" title="查看详情">${icon('arrow-up-right')}</button></article>`).join('');
+  const summary=state.assistantResults.customerSearch?renderAssistantSummary(state.assistantResults.customerSearch,'客户搜索摘要'):'';
+  return `${summary}${rows.slice(0,3).map(r=>`<article class="customer-match-row"><span class="match-score">${r.score}<small>分</small></span><span class="customer-match-copy"><strong>${r.name}</strong><small>${r.country} · ${r.type} · ${r.business||'暂无业务描述'}</small><em>${icon('contact-round')} ${r.contact||'未填写'}</em></span><span class="badge blue">已整合</span><button class="table-icon" data-action="unified-customer-detail" data-name="${r.name}" title="查看详情">${icon('arrow-up-right')}</button></article>`).join('')}`;
 }
 
 function renderLocalDiscoveryCards() {
-  return localDiscoveryLeads.filter(r => r.country === state.discoveryCountry && r.city === state.discoveryCity && r.type === state.discoveryType).slice(0,3).map(r=>`<article class="customer-match-row"><span class="match-score">${r.score}<small>分</small></span><span class="customer-match-copy"><strong>${r.name}</strong><small>${r.country} · ${r.city} · ${r.type}</small><em>${icon('contact-round')} ${r.contact}</em></span><span class="badge blue">OpenClaw 返回</span><button class="table-icon" data-action="local-lead-detail" data-name="${r.name}" title="查看详情">${icon('arrow-up-right')}</button></article>`).join('') || `<div class="tool-empty">当前筛选暂无候选客户，正式版将使用本地知识库检索后调用 OpenClaw 返回结果。</div>`;
-}
-
-function oemDetail(name) {
-  const factory = oemFactories.find(f => f.name === name);
-  if (!factory) return;
-  openDrawer({ title: factory.name, eyebrow: `OEM 匹配 / ${factory.source}`, body: `<div class="spread"><span class="badge green">匹配 ${factory.score} 分</span><span class="secondary-text">原型数据</span></div><div class="detail-grid" style="margin-top:15px">${[['骑行类目',factory.category],['所在城市',factory.city],['供应等级',`Tier ${factory.tier}`],['月产能',factory.capacity],['起订量 MOQ',factory.moq],['数据来源',factory.source],['匹配说明',factory.reason]].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${v}</strong></div>`).join('')}</div><div class="divider-title" style="margin:20px 0 12px">数据链路</div><div class="agent-chain-note"><span class="agent-icon">${icon('route')}</span><span><strong>本地知识库 + 联网检索（RAG/公开网络采集）→ 字段归一化 → 评分排序</strong><small>RAG 是联网资料的检索方式；页面按本地知识库与联网检索两类来源展示。</small></span></div>` });
+  const rows=localDiscoveryLeads.slice(0,3);
+  const summary=state.assistantResults.customerDiscovery?renderAssistantSummary(state.assistantResults.customerDiscovery,'客户发现摘要'):'';
+  return `${summary}${rows.map(r=>`<article class="customer-match-row"><span class="match-score">${r.score}<small>分</small></span><span class="customer-match-copy"><strong>${r.name}</strong><small>${r.country} · ${r.city||'城市待核实'} · ${r.type}</small><em>${icon('contact-round')} ${r.contact||'未填写'}</em></span><span class="badge blue">已整合</span><button class="table-icon" data-action="local-lead-detail" data-name="${r.name}" title="查看详情">${icon('arrow-up-right')}</button></article>`).join('')||(!summary?`<div class="tool-empty">客户原始数据格式和允许的公开来源尚未提供，可先执行查询获取部分分析。</div>`:'')}`;
 }
 
 function unifiedCustomerDetail(name) {
   const customer = unifiedSearchCustomers.find(r => r.name === name);
   if (!customer) return;
-  openDrawer({ title: customer.name, eyebrow: `客户统一搜索 / ${customer.source}`, body: `<div class="spread"><span class="badge ${customer.source.includes('联网检索')?'blue':'green'}">${customer.source}</span><span class="secondary-text">匹配 ${customer.score} 分</span></div><div class="detail-grid" style="margin-top:15px">${[['国家',customer.country],['客户类型',customer.type],['业务方向',customer.business],['联系方式',customer.contact],['搜索模式',state.customerSearchMode === 'local'?'本地知识库':state.customerSearchMode === 'rag'?'联网检索':'本地知识库 + 联网检索'],['联系方式过滤',state.customerHasContact?'已启用':'未启用']].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${v}</strong></div>`).join('')}</div><div class="divider-title" style="margin:20px 0 12px">返回说明</div><p class="secondary-text" style="line-height:1.8">正式版将返回统一客户字段，并保留每个字段的来源、抓取时间和引用链接；联网检索结果不会覆盖本地客户主档。</p>` });
+  openDrawer({ title: customer.name, eyebrow: '客户统一搜索 / 已整合', body: `<div class="spread"><span class="badge blue">已整合</span><span class="secondary-text">匹配 ${customer.score} 分</span></div><div class="detail-grid" style="margin-top:15px">${[['客户编号',customer.id||'未提供'],['国家',customer.country],['客户类型',customer.type],['业务方向',customer.business||'未填写'],['联系方式',customer.contact||'未填写'],['联系方式过滤',state.customerHasContact?'已启用':'未启用']].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${escapeHTML(String(v))}</strong></div>`).join('')}</div><div class="divider-title" style="margin:20px 0 12px">证据说明</div><p class="secondary-text" style="line-height:1.8">页面展示协调器整合后的结果。每条底层证据保留记录编号、更新时间和来源元数据；发生冲突时全部并列展示。</p>` });
 }
 
 function localLeadDetail(name) {
-  const lead = localDiscoveryLeads.find(r => r.name === name);
+  const lead = localDiscoveryLeads.find(item => item.name === name);
   if (!lead) return;
-  openDrawer({ title: lead.name, eyebrow: '本地客户发现 / OpenClaw', body: `<div class="spread"><span class="badge blue">CustomerMeasurementAgent</span><span class="secondary-text">匹配 ${lead.score} 分</span></div><div class="detail-grid" style="margin-top:15px">${[['国家',lead.country],['城市',lead.city],['客户类型',lead.type],['联系方式',lead.contact],['OpenClaw 返回理由',lead.reason]].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${v}</strong></div>`).join('')}</div><div class="agent-chain-note" style="margin-top:16px"><span class="agent-icon">${icon('bot')}</span><span><strong>筛选条件 → 本地/公开信息查询 → CustomerMeasurementAgent</strong><small>正式版返回前会记录查询条件、来源链接和结果时间。</small></span></div>` });
+  openDrawer({ title: lead.name, eyebrow: '本地客户发现 / OpenClaw', body: `<div class="spread"><span class="badge blue">CustomerMeasurementAgent</span><span class="secondary-text">匹配 ${escapeHTML(String(lead.score ?? '待核实'))} 分</span></div><div class="detail-grid" style="margin-top:15px">${[['国家',lead.country],['城市',lead.city],['客户类型',lead.type],['联系方式',lead.contact||'未提供'],['OpenClaw 返回理由',lead.reason||'未提供']].map(([label,value])=>`<div class="detail-field"><label>${label}</label><strong>${escapeHTML(String(value||'未提供'))}</strong></div>`).join('')}</div><div class="agent-chain-note" style="margin-top:16px"><span class="agent-icon">${icon('bot')}</span><span><strong>筛选条件 → 允许的数据源 → CustomerMeasurementAgent</strong><small>结果必须同时保留来源链接、抓取时间和查询条件。</small></span></div>` });
 }
 
-function oemExport() {
-  toast('匹配报告已生成', `已按 ${state.oemSort === 'score' ? '匹配度' : state.oemSort} 和 Top ${state.oemTop} 生成原型报告；正式版导出格式待确认。`);
+async function oemExport() {
+  try {
+    await apiFetch('/api/v1/overview/oem-matches/export',{method:'POST',body:JSON.stringify({query:state.oemQuery,category:state.oemCategory,sort:state.oemSort,top:state.oemTop})});
+  } catch (error) {
+    toast('OEM 报告暂不可生成',error.message,'warning');
+  }
 }
 
 function offlineUpgradeModal() {
@@ -635,31 +798,22 @@ function verifyUpgradePackage(file) {
   const body = document.getElementById('modalBody');
   const footer = document.getElementById('modalFooter');
   const valid = file.name.toLowerCase().endsWith('.zip');
-  body.innerHTML = `<div class="upgrade-file"><span class="upload-icon">${icon(valid ? 'file-check-2' : 'file-warning')}</span><div><strong>${file.name}</strong><small>${(file.size / 1024 / 1024).toFixed(2)} MB · 本机文件</small></div></div><div class="upgrade-checks"><div>${icon(valid?'check-circle-2':'circle-x')}<span>文件格式</span><strong>${valid?'通过':'失败'}</strong></div><div>${icon('cpu')}<span>目标架构</span><strong>${valid?'待解析 ARM64':'未检查'}</strong></div><div>${icon('shield-check')}<span>签名与完整性</span><strong>${valid?'待校验':'未检查'}</strong></div><div>${icon('hard-drive')}<span>磁盘空间</span><strong>${valid?'可用 78.4 GB':'未检查'}</strong></div></div><div class="model-warning" style="margin-top:14px"><span>${icon('info')} 原型仅模拟校验结果；正式版必须由 Go 后端解析升级包清单并验证签名。</span></div>`;
-  footer.innerHTML = `<button class="button" data-action="close-modal">取消</button>${valid ? `<button class="button primary" data-action="offline-install">${icon('download')}校验并安装</button>` : ''}`;
+  state.selectedUpgradeFile=valid?file:null;
+  body.innerHTML = `<div class="upgrade-file"><span class="upload-icon">${icon(valid ? 'file-check-2' : 'file-warning')}</span><div><strong>${escapeHTML(file.name)}</strong><small>${formatBytes(file.size)} · 本机文件</small></div></div><div class="upgrade-checks"><div>${icon(valid?'check-circle-2':'circle-x')}<span>文件扩展名</span><strong>${valid?'通过本地检查':'失败'}</strong></div><div>${icon('cpu')}<span>目标架构</span><strong>等待后端解析</strong></div><div>${icon('shield-check')}<span>签名与完整性</span><strong>等待后端校验</strong></div><div>${icon('hard-drive')}<span>磁盘空间</span><strong>等待后端校验</strong></div></div><div class="model-warning" style="margin-top:14px"><span>${icon('info')} 当前不会模拟安装。后端需要升级包 manifest、签名算法、兼容范围、迁移和回滚规范后才允许导入。</span></div>`;
+  footer.innerHTML = `<button class="button" data-action="close-modal">取消</button>${valid ? `<button class="button primary" data-action="import-upgrade-package">${icon('shield-check')}提交后端校验</button>` : ''}`;
   applyIcons();
 }
 
-function installOfflineUpgrade() {
-  const body = document.getElementById('modalBody');
-  const footer = document.getElementById('modalFooter');
-  body.innerHTML = `<div class="upgrade-progress"><span class="upload-icon">${icon('loader-circle')}</span><h3>正在安装离线升级包</h3><p id="upgradeProgressText">正在创建数据快照...</p><div class="progress"><span id="upgradeProgressBar" style="width:12%"></span></div><small>安装完成后服务将自动重启，页面会短暂不可访问。</small></div>`;
-  footer.innerHTML = '';
-  applyIcons();
-  const steps = ['正在创建数据快照...','正在校验签名和数据库迁移...','正在替换应用文件...','正在执行健康检查...','升级完成，设备将在 3 秒后自动重启...'];
-  let index = 0;
-  const timer = setInterval(() => {
-    index += 1;
-    const text = document.getElementById('upgradeProgressText');
-    const bar = document.getElementById('upgradeProgressBar');
-    if (!text || !bar) return clearInterval(timer);
-    text.textContent = steps[Math.min(index, steps.length - 1)];
-    bar.style.width = `${Math.min(100, 12 + index * 22)}%`;
-    if (index >= steps.length - 1) {
-      clearInterval(timer);
-      setTimeout(() => { closeModal(); toast('升级流程完成', '原型已模拟自动重启；正式版将由 Go 服务执行进程重启。'); }, 1100);
-    }
-  }, 650);
+async function importOfflineUpgrade() {
+  if(!state.selectedUpgradeFile)return;
+  const form=new FormData();form.append('file',state.selectedUpgradeFile);
+  try {await apiFetch('/api/v1/system/upgrade/import',{method:'POST',body:form});}
+  catch(error){toast('升级包暂不能导入',error.message,'warning');}
+}
+
+async function showUpgradeHistory() {
+  try {const result=await apiFetch('/api/v1/system/upgrade/history');openModal({title:'升级记录',eyebrow:'版本升级 / 审计日志',body:result.items?.length?`<pre>${escapeHTML(JSON.stringify(result.items,null,2))}</pre>`:`<div class="empty-state">${icon('history')}<div><h3>暂无升级记录</h3><p>尚未执行过后端离线升级。</p></div></div>`,footer:`<button class="button" data-action="close-modal">关闭</button>`});}
+  catch(error){toast('升级记录读取失败',error.message,'warning');}
 }
 
 function renderAgents() {
@@ -668,11 +822,11 @@ function renderAgents() {
   return `<div class="page-stack">
     ${!state.modelConfigured ? `<div class="model-warning"><span>${icon('triangle-alert')} 当前尚未完成模型配置，智能体不能发起真实调用。</span><button class="button small" data-page="settings">进入模型设置</button></div>` : ''}
     <section class="agents-summary panel">
-      <div><h2>🤖 24 个专业智能体，对应 24 个 OpenClaw Agent</h2><p>每个智能体保留独立初始化配置、技能和会话记录，回答区分本地知识库与联网检索来源。</p></div>
+      <div><h2>🤖 24 个专业智能体，对应 24 个 OpenClaw Agent</h2><p>每个智能体保留独立初始化配置、技能和会话记录，由系统协调器统一组织本地证据与专业回复。</p></div>
       <div class="inline-actions"><button class="button" data-action="agent-manage">${icon('sliders-horizontal')}智能体管理</button><button class="button primary" data-action="weekly-report">${icon('file-clock')}生成本周周报</button></div>
     </section>
     <div class="toolbar">
-      <div class="filter-row">
+      <div class="filter-row agent-category-tabs">
         ${[['all','全部 24'],['trade','贸易与出口 8'],['retail','门店与产品 6'],['market','市场分析 4'],['support','客户与支持 6']].map(([k,l]) => `<button class="filter-chip ${state.agentCategory===k?'active':''}" data-agent-category="${k}">${l}</button>`).join('')}
       </div>
       <span class="spacer"></span>
@@ -707,7 +861,7 @@ function renderCustomers() {
       <select class="select" id="customerCountry"><option value="all">全部国家</option>${[...new Set(customers.map(c=>c.country))].map(v=>`<option ${state.customerCountry===v?'selected':''}>${v}</option>`).join('')}</select>
       <span class="spacer"></span><span class="selection-count">已选 ${state.selectedRows.customers.size} 项</span><button class="button ghost" data-action="column-settings">${icon('columns-3')}列表字段</button>
     </div>
-    <div class="data-wrap"><table class="data-table"><thead><tr><th>${selectAllCheckbox('customers','客户')}</th><th>客户</th><th>类型</th><th>国家</th><th>联系人</th><th>${sortHeader('订单数量','customer','orders',state.customerSort)}</th><th>${sortHeader('累计金额','customer','total',state.customerSort)}</th><th>评级</th><th>${sortHeader('最近更新','customer','updated',state.customerSort)}</th><th>操作</th></tr></thead><tbody>
+    <div class="data-wrap"><table class="data-table" id="customerTable"><thead><tr><th>${selectAllCheckbox('customers','客户')}</th><th>客户</th><th>类型</th><th>国家</th><th>联系人</th><th>${sortHeader('订单数量','customer','orders',state.customerSort)}</th><th>${sortHeader('累计金额','customer','total',state.customerSort)}</th><th>评级</th><th>${sortHeader('最近更新','customer','updated',state.customerSort)}</th><th>操作</th></tr></thead><tbody>
       ${rows.map(c=>`<tr><td>${rowCheckbox('customers',c.id,c.name)}</td><td><button class="link-button primary-cell" data-action="customer-detail" data-id="${escapeAttr(c.id)}"><span class="avatar">${escapeHTML(c.name.slice(0,2).toUpperCase())}</span><span><strong>${escapeHTML(c.name)}</strong><small>${escapeHTML(c.id)}</small></span></button></td><td>${escapeHTML(c.type)}</td><td>${escapeHTML(c.country)}</td><td><span class="primary-cell"><span><strong>${escapeHTML(c.contact)}</strong><small>${escapeHTML(c.email)}</small></span></span></td><td>${c.orders}</td><td>${escapeHTML(c.total)}</td><td>${badge(c.rating)}</td><td>${escapeHTML(c.updated)}</td><td><span class="table-actions"><button class="table-icon" data-action="customer-detail" data-id="${escapeAttr(c.id)}" title="查看">${icon('eye')}</button><button class="table-icon" data-action="edit-customer" data-id="${escapeAttr(c.id)}" title="编辑">${icon('pencil')}</button><button class="table-icon" data-action="customer-more" data-id="${escapeAttr(c.id)}" title="更多">${icon('ellipsis')}</button></span></td></tr>`).join('') || `<tr><td colspan="10"><div class="empty-state">${icon('search-x')}<div><h3>未找到客户</h3><p>请调整搜索词或筛选条件。</p></div></div></td></tr>`}
     </tbody></table></div>
     <div class="pagination"><span>共 ${rows.length} 条记录 · 每页 20 条</span><div><button class="button small ghost" disabled>${icon('chevron-left')}</button><button class="button small" data-action="pagination-current">1</button><button class="button small ghost" disabled>${icon('chevron-right')}</button></div></div>
@@ -716,7 +870,7 @@ function renderCustomers() {
 
 function renderQuotes() {
   const query = state.quoteSearch.trim().toLowerCase();
-  const visible = sortRows(quotes.filter(q => (!query || [q.id, q.subject, q.customer, q.products].join(' ').toLowerCase().includes(query)) && (state.quoteStatus === 'all' || q.status === state.quoteStatus)), state.quoteSort, { value: quote => moneyNumber(quote.value) });
+  const visible = sortRows(quotes.filter(q => (!query || [q.id, q.subject, q.customer, q.products].join(' ').toLowerCase().includes(query)) && (state.quoteStatus === 'all' || q.status === state.quoteStatus) && (!state.quoteDateFrom || q.valid >= state.quoteDateFrom) && (!state.quoteDateTo || q.valid <= state.quoteDateTo)), state.quoteSort, { value: quote => moneyNumber(quote.value) });
   return `<div class="page-stack">
     <div class="page-intro"><div><h2>📄 报价单管理</h2><p>从客户和产品生成报价，接受后可完整转为订单。</p></div><div class="toolbar"><button class="button" data-action="template-center" data-kind="quote">${icon('layout-template')}模板管理</button><button class="button primary" data-action="new-quote">${icon('plus')}新建报价单</button></div></div>
     <section class="metric-grid" style="grid-template-columns:repeat(4,1fr)">${[['全部报价',42,'files','all'],['草稿',8,'file-pen-line','Draft'],['待客户确认',12,'send','Delivered'],['本月已接受',14,'badge-check','Accepted']].map(([l,v,i,status])=>`<button class="metric-button" data-action="quote-metric-filter" data-status="${status}"><span class="metric-icon">${icon(i)}</span><span><strong class="metric-number">${v}</strong><span class="metric-label">${l}</span></span></button>`).join('')}</section>
@@ -735,7 +889,7 @@ function renderQuoteKanban(rows=quotes) {
 
 function renderOrders() {
   const query = state.orderSearch.trim().toLowerCase();
-  const visible = sortRows(orders.filter(o => (!query || [o.id, o.customer, o.quote, o.products].join(' ').toLowerCase().includes(query)) && (state.orderStatus === 'all' || o.status === state.orderStatus)), state.orderSort, { value: order => moneyNumber(order.value) });
+  const visible = sortRows(orders.filter(o => (!query || [o.id, o.customer, o.quote, o.products].join(' ').toLowerCase().includes(query)) && (state.orderStatus === 'all' || o.status === state.orderStatus) && (!state.orderDateFrom || o.delivery >= state.orderDateFrom) && (!state.orderDateTo || o.delivery <= state.orderDateTo)), state.orderSort, { value: order => moneyNumber(order.value) });
   return `<div class="page-stack">
     <div class="page-intro"><div><h2>📦 订单生命周期</h2><p>订单可由已接受报价转化，也可手动创建；不直接连接第三方平台下单。</p></div><div class="toolbar"><button class="button" data-action="template-center" data-kind="order">${icon('layout-template')}模板管理</button><button class="button primary" data-action="new-order">${icon('plus')}新建订单</button></div></div>
     <div class="toolbar"><label class="field-search">${icon('search')}<input id="orderSearch" value="${escapeAttr(state.orderSearch)}" placeholder="搜索订单、客户或产品"></label><select class="select" id="orderStatus"><option value="all">全部状态</option>${[['Confirmed','已确认'],['Production','生产中'],['Shipped','已发运'],['Completed','已完成']].map(([v,l])=>`<option value="${v}" ${state.orderStatus===v?'selected':''}>${l}</option>`).join('')}</select><button class="button ghost" data-action="order-date-filter">${icon('calendar-range')}交付日期</button><span class="result-count">${visible.length} 条 · 已选 ${state.selectedRows.orders.size} 项</span><span class="spacer"></span><span class="badge blue">${visible.filter(o=>o.status!=='Completed').length} 个进行中订单</span></div>
@@ -811,11 +965,14 @@ function newSupplierForm(supplier) {
   openModal({title:supplier?'编辑供应商':'新建供应商',eyebrow:'供应商档案',body:`<div class="form-grid">${inputField('公司',s.company||'',true,false,'text','supplierCompany')}${inputField('电话',s.phone||'',false,false,'tel','supplierPhone')}${inputField('联系人',s.contact||'',false,false,'text','supplierContact')}${inputField('邮件',s.email||'',false,false,'email','supplierEmail')}${inputField('产品',s.product||'',false,false,'text','supplierProduct')}${inputField('规格',s.specification||'',false,false,'text','supplierSpecification')}${inputField('报价',s.quote||'',false,false,'text','supplierQuote')}${selectField('来源',['展会','电话','朋友介绍','拜访','互联网线索','客户转介绍','其它'],false,'supplierSource',s.source||'其它')}${inputField('备注',s.notes||'',false,true,'text','supplierNotes')}</div>`,footer:formFooter(supplier?'保存修改':'创建供应商','save-supplier')});
 }
 
-function saveSupplier() {
+async function saveSupplier() {
   const company=formText('supplierCompany'); if(!company){toast('保存失败','公司名称为必填项。','warning');return;}
-  const existing=suppliers.find(s=>s.id===state.formContext?.id); const record=existing||{id:nextRecordId('SUP',suppliers)};
-  Object.assign(record,{company,phone:formText('supplierPhone'),contact:formText('supplierContact'),email:formText('supplierEmail'),product:formText('supplierProduct'),specification:formText('supplierSpecification'),quote:formText('supplierQuote'),source:formText('supplierSource'),notes:formText('supplierNotes'),updated:nowText()});
-  if(!existing)suppliers.unshift(record); closeModal(); renderPage(); toast(existing?'供应商已更新':'供应商已创建',`${record.company} 已保存。`);
+  const existing=suppliers.find(s=>s.id===state.formContext?.id);
+  const payload={...(existing||{}),company,phone:formText('supplierPhone'),contact:formText('supplierContact'),email:formText('supplierEmail'),product:formText('supplierProduct'),specification:formText('supplierSpecification'),quote:formText('supplierQuote'),source:formText('supplierSource'),notes:formText('supplierNotes')};
+  try {
+    const record=await apiFetch(existing?`/api/v1/suppliers/${encodeURIComponent(existing.id)}`:'/api/v1/suppliers',{method:existing?'PATCH':'POST',body:JSON.stringify(payload)});
+    upsertRecord(suppliers,record); closeModal(); renderPage(); toast(existing?'供应商已更新':'供应商已创建',`${record.company} 已保存到本地数据库。`);
+  } catch(error) { toast('保存失败',error.message,'warning'); }
 }
 
 function supplierDetail(id) {
@@ -823,18 +980,23 @@ function supplierDetail(id) {
   openDrawer({title:s.company,eyebrow:`供应商 / ${s.id}`,body:`<div class="spread"><span class="badge blue">${escapeHTML(s.source)}</span><div class="inline-actions"><button class="button small" data-action="edit-supplier" data-id="${escapeAttr(s.id)}">${icon('pencil')}编辑</button><button class="button danger small" data-action="delete-supplier" data-id="${escapeAttr(s.id)}">${icon('trash-2')}删除</button></div></div><div class="detail-grid" style="margin-top:15px">${[['公司',s.company],['电话',s.phone],['联系人',s.contact],['邮件',s.email],['产品',s.product],['规格',s.specification],['报价',s.quote],['来源',s.source],['备注',s.notes],['更新时间',s.updated]].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${escapeHTML(v||'未填写')}</strong></div>`).join('')}</div><div class="divider-title" style="margin:20px 0 12px">后续扩展字段</div><p class="secondary-text">可在正式业务库中继续扩展认证、产能、MOQ、合作状态、付款条件和历史报价。</p>`});
 }
 
-function deleteSupplier(id) { if(!window.confirm('确定删除该供应商吗？'))return; const index=suppliers.findIndex(s=>s.id===id); if(index>=0)suppliers.splice(index,1); closeDrawer(); renderPage(); toast('供应商已删除','前端示例数据已移除。'); }
+async function deleteSupplier(id) { if(!window.confirm('确定归档该供应商吗？'))return; try { await apiFetch(`/api/v1/suppliers/${encodeURIComponent(id)}`,{method:'DELETE'}); removeRecord(suppliers,id); closeDrawer(); renderPage(); toast('供应商已归档','供应商记录已写入本地数据库。'); } catch(error) { toast('归档失败',error.message,'warning'); } }
 
 function renderDatabase() {
-  const categories = [['合同',23,'file-signature'],['报价单',46,'file-chart-column'],['产品手册',128,'book-open'],['法规',85,'scale'],['产品资料',216,'boxes'],['会议记录',32,'notebook-tabs'],['客户资料',174,'contact'],['图片',485,'images'],['其它',29,'folder']];
+  const categoryIcons = {合同:'file-signature',报价单:'file-chart-column',产品手册:'book-open',法规:'scale',产品资料:'boxes',会议记录:'notebook-tabs',客户资料:'contact',图片:'images',其它:'folder','待分类':'folder-search'};
+  const categoryCounts = files.reduce((result,file)=>{result[file.category]=(result[file.category]||0)+1;return result;},{});
+  const categories = Object.entries(categoryCounts).sort(([left],[right])=>left.localeCompare(right,'zh-CN')).map(([name,count])=>[name,count,categoryIcons[name]||'folder']);
   const fileQuery = state.fileSearch.trim().toLowerCase();
   const visibleFiles = files.filter(f => !fileQuery || Object.values(f).join(' ').toLowerCase().includes(fileQuery));
+  const totalBytes = files.reduce((sum,file)=>sum+Number(file.bytes||0),0);
+  const indexedCount = files.filter(file=>file.status==='Indexed').length;
+  const reviewCount = files.filter(file=>!['Indexed'].includes(file.status)).length;
   return `<div class="page-stack">
     <div class="page-intro"><div><h2>📚 私有数据库</h2><p>出厂通用资料与客户私有数据分区存储，客户数据仅保存在本机。</p></div><div class="toolbar"><button class="button" data-action="agent-backup">${icon('archive')}备份智能体数据</button><button class="button primary" data-action="upload-file">${icon('upload')}上传文件</button></div></div>
-    <section class="metric-grid" style="grid-template-columns:repeat(4,1fr)">${[['文件总数','1,218','files'],['已建立索引','1,164','database-zap'],['待人工确认','17','circle-help'],['本地占用','12.8 GB','hard-drive']].map(([l,v,i])=>`<div class="metric-button"><span class="metric-icon">${icon(i)}</span><span><strong class="metric-number">${v}</strong><span class="metric-label">${l}</span></span></div>`).join('')}</section>
+    <section class="metric-grid" style="grid-template-columns:repeat(4,1fr)">${[['文件总数',String(files.length),'files'],['已建立索引',String(indexedCount),'database-zap'],['待处理/确认',String(reviewCount),'circle-help'],['本地占用',formatBytes(totalBytes),'hard-drive']].map(([l,v,i])=>`<div class="metric-button"><span class="metric-icon">${icon(i)}</span><span><strong class="metric-number">${v}</strong><span class="metric-label">${l}</span></span></div>`).join('')}</section>
     <div class="section-head"><div><h3>数据分类</h3><p>一个文件可以属于多个标签，分类用于主归档。</p></div><button class="button ghost small" data-action="tag-manage">${icon('tags')}标签管理</button></div>
     <section class="category-grid">${categories.map(([n,c,i])=>`<button class="category-card" data-action="open-category" data-category="${n}"><span class="category-icon">${icon(i)}</span><strong>${n}</strong><span>${c} 个文件</span></button>`).join('')}</section>
-    <section class="panel"><header class="panel-head"><div><h3>最近文件</h3><p>展示解析、分类和索引结果</p></div><label class="field-search" style="height:32px">${icon('search')}<input id="fileSearch" value="${escapeAttr(state.fileSearch)}" placeholder="搜索文件或标签"></label></header><div class="data-wrap" style="border:0;border-radius:0"><table class="data-table"><thead><tr><th>文件名</th><th>主分类</th><th>标签</th><th>来源</th><th>大小</th><th>索引状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${visibleFiles.map(f=>`<tr><td><button class="link-button" data-action="file-preview" data-name="${escapeAttr(f.name)}">${escapeHTML(f.name)}</button></td><td>${escapeHTML(f.category)}</td><td>${f.tags.map(t=>`<span class="badge neutral">${escapeHTML(t)}</span>`).join(' ')}</td><td>${escapeHTML(f.source)}</td><td>${escapeHTML(f.size)}</td><td>${badge(f.status)}</td><td>${escapeHTML(f.updated)}</td><td><span class="table-actions"><button class="table-icon" data-action="file-preview" data-name="${escapeAttr(f.name)}" title="预览">${icon('eye')}</button><button class="table-icon" data-action="file-edit" data-name="${escapeAttr(f.name)}" title="编辑">${icon('pencil')}</button><button class="table-icon" data-action="file-more" data-name="${escapeAttr(f.name)}" title="更多">${icon('ellipsis')}</button></span></td></tr>`).join('') || `<tr><td colspan="8"><div class="empty-state"><p>未找到匹配文件</p></div></td></tr>`}</tbody></table></div></section>
+    <section class="panel"><header class="panel-head"><div><h3>最近文件</h3><p>展示解析、分类和索引结果</p></div><label class="field-search" style="height:32px">${icon('search')}<input id="fileSearch" value="${escapeAttr(state.fileSearch)}" placeholder="搜索文件或标签"></label></header><div class="data-wrap" style="border:0;border-radius:0"><table class="data-table"><thead><tr><th>文件名</th><th>主分类</th><th>标签</th><th>来源</th><th>大小</th><th>索引状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${visibleFiles.map(f=>`<tr><td><button class="link-button" data-action="file-preview" data-id="${escapeAttr(f.id)}">${escapeHTML(f.name)}</button></td><td>${escapeHTML(f.category)}</td><td>${(f.tags||[]).map(t=>`<span class="badge neutral">${escapeHTML(t)}</span>`).join(' ')}</td><td>${escapeHTML(f.source)}</td><td>${escapeHTML(f.size)}</td><td>${badge(f.status)}</td><td>${escapeHTML(f.updated)}</td><td><span class="table-actions"><button class="table-icon" data-action="file-preview" data-id="${escapeAttr(f.id)}" title="预览">${icon('eye')}</button><button class="table-icon" data-action="file-edit" data-id="${escapeAttr(f.id)}" title="编辑">${icon('pencil')}</button><button class="table-icon" data-action="file-more" data-id="${escapeAttr(f.id)}" title="更多">${icon('ellipsis')}</button></span></td></tr>`).join('') || `<tr><td colspan="8"><div class="empty-state"><p>未找到匹配文件</p></div></td></tr>`}</tbody></table></div></section>
   </div>`;
 }
 
@@ -866,7 +1028,7 @@ function invalidNewsField(input, message) {
   toast('无法保存新闻设置',message,'warning');
 }
 
-function saveNewsSettings() {
+async function saveNewsSettings() {
   const countries = document.getElementById('newsCountries');
   const topics = document.getElementById('newsTopics');
   const limitInput = document.getElementById('newsShowLimit');
@@ -893,10 +1055,11 @@ function saveNewsSettings() {
   state.newsShowLimit = limit;
   state.newsFrequency = frequency.value;
   state.newsSources = sourcesValue;
-  localStorage.setItem('sta100-news-settings',JSON.stringify({countries:countriesValue,topics:topicsValue,showLimit:limit,frequency:frequency.value,sources:sourcesValue}));
-  closeModal();
-  renderPage();
-  toast('新闻设置已保存',`每 ${state.newsFrequency} 获取，单次最多展示 ${state.newsShowLimit} 条。`);
+  try {
+    await savePreferences();
+    localStorage.removeItem('sta100-news-settings');
+    closeModal(); renderPage(); toast('新闻设置已保存',`每 ${state.newsFrequency} 获取，单次最多展示 ${state.newsShowLimit} 条。`);
+  } catch(error) { toast('新闻设置保存失败',error.message,'warning'); }
 }
 
 function renderSettings() {
@@ -910,14 +1073,24 @@ function renderSettings() {
 function renderSettingsContent() {
   const content = {
     model: renderModelSettings(),
-    plugins: `<section class="panel"><header class="panel-head"><div><h3>插件绑定</h3><p>首期提供微信和飞书，能力与 OpenClaw 插件绑定方式保持一致</p></div></header>${[['微信','消息推送与交互入口','message-circle','未绑定'],['飞书','消息、文档和通知能力','send','已绑定']].map(([n,d,i,s])=>`<div class="setting-row"><span class="setting-icon">${icon(i)}</span><div class="setting-copy"><strong>${n}</strong><span>${d}</span></div>${s==='已绑定'?badge('Active'):'<span class="badge neutral">未绑定</span>'}<button class="button small" data-action="bind-plugin" data-plugin="${n}">${s==='已绑定'?'管理':'绑定'}</button></div>`).join('')}</section>`,
-    scheduler: `<section class="panel"><header class="panel-head"><div><h3>定时任务</h3><p>内置任务不能删除，但可以编辑内容、频率和开关</p></div><button class="button small" data-action="new-schedule">${icon('plus')}新增任务</button></header>${[['每日推荐更新',`每 ${state.newsFrequency}`,'10:45','Active'],['智能体周报','每周五 18:00','2026-08-14 18:00','Active'],['行业新闻更新',`每 ${state.newsFrequency}`,'14:00','Active'],['数据索引维护','每天 02:30','2026-08-11 02:30','Draft']].map(([n,f,next,s])=>`<div class="setting-row"><span class="setting-icon">${icon('timer-reset')}</span><div class="setting-copy"><strong>${n}</strong><span>${f} · 下次运行 ${next}</span></div>${badge(s)}<button class="table-icon" data-action="edit-schedule" data-name="${n}" title="编辑">${icon('pencil')}</button></div>`).join('')}</section>`,
-    backup: `<section class="panel"><header class="panel-head"><div><h3>智能体数据备份</h3><p>仅备份智能体初始化配置、技能、会话和用户操作记录</p></div></header><div class="setting-row"><span class="setting-icon">${icon('folder-cog')}</span><div class="setting-copy"><strong>备份目录</strong><span>/mnt/sta100-backup/agents · 可选择外置存储目录</span></div><button class="button small" data-action="choose-backup">选择目录</button></div><div class="setting-row"><span class="setting-icon">${icon('archive')}</span><div class="setting-copy"><strong>最近备份</strong><span>2026-08-09 23:30 · 1.42 GB · 校验成功</span></div><button class="button primary small" data-action="agent-backup">立即备份</button></div></section>`,
-    security: `<section class="panel"><header class="panel-head"><div><h3>数据安全</h3><p>客户私有数据归客户所有，并保存在设备本地</p></div></header><div class="setting-row"><span class="setting-icon">${icon('user-round-cog')}</span><div class="setting-copy"><strong>本机登录账户</strong><span>当前用户名：${escapeHTML(authState.username)} · 密码以哈希形式保存在本机浏览器</span></div><button class="button small" data-action="account-settings">${icon('key-round')}修改用户名和密码</button></div>${[['本地存储区','客户上传文件、业务数据库和索引均存储在本机','hard-drive'],['敏感信息保护','密钥加密保存；列表和日志不显示完整密钥','lock-keyhole'],['联网调用边界','仅把完成当前任务所需的最小内容发送给已配置模型','network'],['操作记录','记录关键增删改、导出、模型和升级操作','scroll-text']].map(([n,d,i])=>`<div class="setting-row"><span class="setting-icon">${icon(i)}</span><div class="setting-copy"><strong>${n}</strong><span>${d}</span></div>${badge('Active')}</div>`).join('')}</section>`,
+    plugins: renderPluginSettings(),
+    scheduler: renderSchedulerSettings(),
+    backup: `<section class="panel"><header class="panel-head"><div><h3>智能体数据备份</h3><p>仅备份智能体初始化配置、技能、会话和用户操作记录</p></div></header><div class="setting-row"><span class="setting-icon">${icon('folder-cog')}</span><div class="setting-copy"><strong>备份目录</strong><span>当前由设备后端写入 STA-100 本地备份区；外置目录授权方式待部署确认</span></div><button class="button small" data-action="choose-backup">目录说明</button></div><div class="setting-row"><span class="setting-icon">${icon('archive')}</span><div class="setting-copy"><strong>本次会话最近备份</strong><span>${state.lastAgentBackup?`${escapeHTML(state.lastAgentBackup.path)} · ${formatBytes(state.lastAgentBackup.bytes)}`:'尚未执行备份'}</span></div><button class="button primary small" data-action="agent-backup">立即备份</button></div></section>`,
+    security: `<section class="panel"><header class="panel-head"><div><h3>数据安全</h3><p>客户私有数据归客户所有，并保存在设备本地</p></div></header><div class="setting-row"><span class="setting-icon">${icon('user-round-cog')}</span><div class="setting-copy"><strong>本机登录账户</strong><span>当前用户名：${escapeHTML(authState.username)} · 密码以随机盐哈希保存在设备本机配置文件</span></div><button class="button small" data-action="account-settings">${icon('key-round')}修改用户名和密码</button></div>${[['本地存储区','客户上传文件、业务数据库和索引均存储在本机','hard-drive'],['敏感信息保护','模型密钥由 OpenClaw 凭据库保存；页面和日志不回显完整密钥','lock-keyhole'],['联网调用边界','仅把完成当前任务所需的最小内容发送给已配置模型','network'],['操作记录','记录关键增删改、导出、模型和升级操作','scroll-text']].map(([n,d,i])=>`<div class="setting-row"><span class="setting-icon">${icon(i)}</span><div class="setting-copy"><strong>${n}</strong><span>${d}</span></div>${badge('Active')}</div>`).join('')}</section>`,
     system: renderSystemSettings(),
     upgrade: `<section class="panel"><header class="panel-head"><div><h3>版本升级</h3><p>仅支持管理员手动导入离线升级包，不启用在线热升级</p></div><span class="badge neutral">离线升级</span></header><div class="setting-row"><span class="setting-icon">${icon('package-check')}</span><div class="setting-copy"><strong>当前版本</strong><span>1.0.0 · ARM64 · 构建 20260810</span></div><span class="setting-value">运行正常</span></div><div class="setting-row"><span class="setting-icon">${icon('shield-check')}</span><div class="setting-copy"><strong>升级保护</strong><span>安装前校验签名、版本、架构和磁盘空间，并自动创建业务数据、配置及 Agent 数据快照</span></div>${badge('Active')}</div><div class="setting-row"><span class="setting-icon">${icon('upload')}</span><div class="setting-copy"><strong>导入离线升级包</strong><span>选择本机 .zip 包，校验通过并经管理员确认后安装；完成后设备自动重启</span></div><button class="button primary small" data-action="offline-upgrade">${icon('upload')}选择升级包</button></div><div class="setting-row"><span class="setting-icon">${icon('history')}</span><div class="setting-copy"><strong>最近升级记录</strong><span>暂无升级记录 · 日志和旧版本将保留用于失败回滚</span></div><button class="button small" data-action="upgrade-history">查看记录</button></div></section>`,
   };
   return content[state.settingsTab];
+}
+
+function renderPluginSettings() {
+  const iconFor=id=>id==='wechat'?'message-circle':'send';
+  const descriptionFor=id=>id==='wechat'?'消息推送与交互入口':'消息、文档和通知能力';
+  return `<section class="panel"><header class="panel-head"><div><h3>插件绑定</h3><p>首期提供微信和飞书；具体凭据、推送内容和同步范围仍需客户确认</p></div></header>${boundPlugins.map(plugin=>`<div class="setting-row"><span class="setting-icon">${icon(iconFor(plugin.id))}</span><div class="setting-copy"><strong>${escapeHTML(plugin.name)}</strong><span>${descriptionFor(plugin.id)} · ${escapeHTML(plugin.status)}</span></div>${badge(plugin.enabled?'Review':'Draft')}<button class="button small" data-action="bind-plugin" data-id="${escapeAttr(plugin.id)}">${plugin.enabled?'管理':'绑定'}</button></div>`).join('')||`<div class="empty-state"><p>未读取到插件配置。</p></div>`}</section>`;
+}
+
+function renderSchedulerSettings() {
+  return `<section class="panel"><header class="panel-head"><div><h3>定时任务</h3><p>内置任务不能删除，但可以编辑内容、频率和开关</p></div><button class="button small" data-action="new-schedule">${icon('plus')}新增任务</button></header>${scheduledJobs.map(job=>`<div class="setting-row"><span class="setting-icon">${icon('timer-reset')}</span><div class="setting-copy"><strong>${escapeHTML(job.name)}</strong><span>${escapeHTML(job.schedule||'未设置')} · ${job.nextRun?`下次运行 ${escapeHTML(job.nextRun)}`:'尚未计算下次运行时间'}${job.error?` · ${escapeHTML(job.error)}`:''}</span></div>${badge(job.enabled?(job.status==='Ready'?'Active':'Review'):'Draft')}<button class="table-icon" data-action="edit-schedule" data-id="${escapeAttr(job.id)}" title="编辑">${icon('pencil')}</button></div>`).join('')||`<div class="empty-state"><p>未读取到定时任务。</p></div>`}</section>`;
 }
 
 function renderModelSettings() {
@@ -937,23 +1110,25 @@ function renderModelSettings() {
 
 function renderSystemSettings() {
   const status = state.openClawStatus;
+  const health = state.systemHealth;
   const managedCount = state.openClawAgents?.filter(agent => !agent.isDefault).length;
   const openClawValue = state.openClawStatusLoading ? '正在读取服务状态' : status?.available ? `${status.version} · ${status.serviceStatus} · RPC ${status.rpcOK?'正常':'异常'}` : status?.error || '暂未读取';
   const agentValue = state.openClawAgentsLoading ? '正在读取 Agent' : managedCount === undefined ? '暂未读取' : `${managedCount} 个 STA-100 Agent 已注册`;
   const rows = [
-    ['设备型号','STA-100 / ARM64','cpu',true],
-    ['系统版本','STA-100 OS 1.0.0','monitor',true],
+    ['运行环境',health?.runtime?`${health.runtime.os} / ${health.runtime.arch} / ${health.runtime.go}`:'正在读取','cpu',Boolean(health?.runtime)],
+    ['服务健康',health?.status||health?.error||'正在读取','monitor',health?.status==='ok'],
     ['OpenClaw',openClawValue,'bot',Boolean(status?.rpcOK)],
     ['Agent 编排',agentValue,'blocks',managedCount===24],
-    ['本地数据库','SQLite · 正常 · 286 MB','database',true],
-    ['存储空间','已用 12.8 GB / 可用 78.4 GB','hard-drive',true],
+    ['本地数据库',health?.database?`SQLite · ${health.database.ok?'正常':'异常'} · ${formatBytes(health.database.bytes)}`:'正在读取','database',Boolean(health?.database?.ok)],
+    ['存储空间',health?.storage?`私有文件 ${formatBytes(health.storage.privateFileBytes)} / 可用 ${formatBytes(health.storage.availableBytes)}`:'正在读取','hard-drive',Boolean(health?.storage?.ok)],
+    ['知识索引',health?.index?`${health.index.indexed} / ${health.index.files} 个文件已索引 · ${health.index.status}`:'正在读取','database-zap',health?.index?.status==='ready'],
   ];
-  return `<section class="panel"><header class="panel-head"><div><h3>⚙️ 系统信息</h3><p>硬件、服务和本地组件运行状态</p></div><button class="button small" data-action="refresh-openclaw-system">${icon('refresh-cw')}刷新</button></header>${rows.map(([name,value,iconName,ok])=>`<div class="setting-row"><span class="setting-icon">${icon(iconName)}</span><div class="setting-copy"><strong>${name}</strong><span>${escapeHTML(value)}</span></div>${badge(ok?'Active':'Review')}</div>`).join('')}</section>`;
+  return `<section class="panel"><header class="panel-head"><div><h3>⚙️ 系统信息</h3><p>数值来自 Go 健康检查、SQLite 和 OpenClaw，不使用预置容量</p></div><button class="button small" data-action="refresh-openclaw-system">${icon('refresh-cw')}刷新</button></header>${rows.map(([name,value,iconName,ok])=>`<div class="setting-row"><span class="setting-icon">${icon(iconName)}</span><div class="setting-copy"><strong>${name}</strong><span>${escapeHTML(value)}</span></div>${badge(ok?'Active':'Review')}</div>`).join('')}</section>`;
 }
 
 function wirePageSpecific() {
   const sub = document.getElementById('subscriptionToggle');
-  if (sub) sub.addEventListener('change', e => { state.subscription = e.target.checked; toast('订阅设置已更新', state.subscription ? `系统将每 ${state.newsFrequency} 更新一次推荐。` : '自动更新已暂停。'); renderPage(); });
+  if (sub) sub.addEventListener('change', async e => { const previous=state.subscription; state.subscription=e.target.checked; try { await apiFetch('/api/v1/overview/subscription',{method:'PATCH',body:JSON.stringify({enabled:state.subscription})}); toast('订阅设置已更新',state.subscription?`系统将每 ${state.newsFrequency} 更新一次推荐。`:'自动更新已暂停。'); } catch(error) { state.subscription=previous; toast('订阅设置失败',error.message,'warning'); } renderPage(); });
   const agentSearch = document.getElementById('agentSearch');
   if (agentSearch) agentSearch.addEventListener('input', e => filterCards('#agentGrid .agent-card', 'agentSearch', e.target.value));
   const customerSearch = document.getElementById('customerSearch');
@@ -986,8 +1161,6 @@ function wirePageSpecific() {
   if (oemTop) oemTop.addEventListener('change', e => { state.oemTop = Number(e.target.value); renderPage(); });
   const oemQuery = document.getElementById('oemQuery');
   if (oemQuery) oemQuery.addEventListener('input', e => { state.oemQuery = e.target.value; });
-  const unifiedMode = document.getElementById('unifiedSearchMode');
-  if (unifiedMode) unifiedMode.addEventListener('change', e => { state.customerSearchMode = e.target.value; renderPage(); });
   const discoveryCountry = document.getElementById('discoveryCountry');
   if (discoveryCountry) discoveryCountry.addEventListener('change', e => { state.discoveryCountry = e.target.value; state.discoveryCity = discoveryCities[state.discoveryCountry][0]; renderPage(); });
   const discoveryCity = document.getElementById('discoveryCity');
@@ -1016,6 +1189,27 @@ function wirePageSpecific() {
     input.checked ? selected.add(input.dataset.id) : selected.delete(input.dataset.id);
     renderPage();
   }));
+  applyCustomerColumnVisibility();
+}
+
+const customerColumnDefinitions = [
+  ['customer','客户'],['type','客户类型'],['country','国家'],['contact','联系人'],['orders','订单数'],['total','累计金额'],['rating','评级'],['updated','更新时间'],
+];
+
+function openCustomerColumnSettings() {
+  openModal({title:'客户列表字段',eyebrow:'显示设置',body:`<div class="filter-row">${customerColumnDefinitions.map(([key,label])=>`<label class="filter-chip ${state.customerVisibleColumns.has(key)?'active':''}"><input type="checkbox" data-customer-column="${key}" ${state.customerVisibleColumns.has(key)?'checked':''}>${label}</label>`).join('')}</div>`,footer:formFooter('应用','save-customer-columns')});
+}
+
+function saveCustomerColumns() {
+  const selected=[...document.querySelectorAll('[data-customer-column]:checked')].map(input=>input.dataset.customerColumn);
+  if(!selected.includes('customer'))selected.unshift('customer');
+  state.customerVisibleColumns=new Set(selected);closeModal();renderPage();
+}
+
+function applyCustomerColumnVisibility() {
+  const table=document.getElementById('customerTable');if(!table)return;
+  const indexes={customer:2,type:3,country:4,contact:5,orders:6,total:7,rating:8,updated:9};
+  Object.entries(indexes).forEach(([key,index])=>table.querySelectorAll(`tr > *:nth-child(${index})`).forEach(cell=>{cell.hidden=!state.customerVisibleColumns.has(key);}));
 }
 
 function filterCards(selector, dataKey, query) {
@@ -1069,6 +1263,13 @@ function nowText() { return new Date().toISOString().slice(0, 16).replace('T', '
 function nextRecordId(prefix, list) { return `${prefix}-${String(list.length + 1).padStart(4, '0')}`; }
 function moneyNumber(value) { const number = Number(String(value || '').replace(/[^0-9.-]/g, '')); return Number.isFinite(number) ? number : 0; }
 function formatMoney(value, currency='EUR') { return `${currency} ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function formatBytes(value) {
+  const bytes=Number(value||0);
+  if(bytes<1024)return `${bytes} B`;
+  if(bytes<1024*1024)return `${(bytes/1024).toFixed(1)} KB`;
+  if(bytes<1024*1024*1024)return `${(bytes/1024/1024).toFixed(1)} MB`;
+  return `${(bytes/1024/1024/1024).toFixed(1)} GB`;
+}
 function sortHeader(label, module, field, sort) {
   const active = sort.field === field;
   const direction = active ? sort.direction : '';
@@ -1184,9 +1385,7 @@ function renderAgentChatBody(index) {
   const agentID = agentIDs[index];
   const messages = state.agentChats[agentID] || [];
   const allowlist = getAgentAllowlist(agentID);
-  const selected = state.agentSourceSelections[agentID] || ['本地业务数据库','客户私有知识库'];
-  const checked = source => selected.includes(source) ? 'checked' : '';
-  return `<div class="chat-layout"><aside class="chat-side"><div class="chat-side-head"><h3>本次可用来源</h3><span>按需勾选</span></div><label class="chat-source selectable"><input class="checkbox chat-source-option" type="checkbox" value="本地业务数据库" ${checked('本地业务数据库')}><span><strong>本地业务数据库</strong><small>业务数据接口待接入</small></span></label><label class="chat-source selectable"><input class="checkbox chat-source-option" type="checkbox" value="客户私有知识库" ${checked('客户私有知识库')}><span><strong>客户私有知识库</strong><small>本地向量索引</small></span></label><label class="chat-source selectable"><input class="checkbox chat-source-option" type="checkbox" value="联网检索" ${checked('联网检索')}><span><strong>联网检索</strong><small>${allowlist.length} 个允许域名</small></span></label><button class="button ghost small source-settings-button" data-action="agent-allowlist" data-agent="${index}">${icon('shield-check')}联网白名单</button><p class="chat-source-note">勾选结果和白名单会随本次消息提交给 OpenClaw Agent。工具层域名强制拦截将在联网工具接入时实现。</p></aside><section class="chat-main"><header class="chat-head"><div><strong>${agentEmojis[index]} ${escapeHTML(a[0])}</strong><span>${escapeHTML(agentID)}</span></div><span>${badge(state.modelConfigured?'Active':'Review')}</span></header><div class="chat-quick-prompts">${a[5].map(v=>`<button data-action="chat-quick-prompt" data-agent="${index}" data-prompt="${escapeAttr(v)}">${escapeHTML(v)}</button>`).join('')}</div><div class="chat-messages" id="chatMessages"><div class="message-row"><div class="message"><strong>${escapeHTML(a[0])}</strong><br>已连接 OpenClaw Agent。消息将进入该 Agent 的独立会话。<time>当前会话</time></div></div>${messages.map(m=>renderAgentMessage(m,index)).join('')}</div><div class="chat-status" id="chatStatus" aria-live="polite"></div><div class="chat-input-row"><textarea class="textarea" id="chatInput" maxlength="32768" rows="2" placeholder="向 ${escapeAttr(a[0])} 发送消息，Enter 发送，Shift+Enter 换行"></textarea><button class="icon-button chat-send" data-action="send-chat" data-agent="${index}" title="发送消息" aria-label="发送消息">${icon('send')}</button></div></section></div>`;
+  return `<div class="chat-layout"><aside class="chat-side"><div class="chat-side-head"><h3>统一智能处理</h3><span>系统编排</span></div><div class="chat-source policy-fixed"><span class="agent-icon">${icon('workflow')}</span><span><strong>本地证据 → 协调器 → 领域 Agent</strong><small>页面不区分本地或联网结果，系统按规则自动整合。</small></span></div><button class="button ghost small source-settings-button" data-action="agent-allowlist" data-agent="${index}">${icon('shield-check')}联网白名单</button><p class="chat-source-note">白名单属于后台安全配置，不是本次聊天的来源选择。冲突数据会全部保留并标记。</p></aside><section class="chat-main"><header class="chat-head"><div><strong>${agentEmojis[index]} ${escapeHTML(a[0])}</strong><span>${escapeHTML(agentID)}</span></div><span>${badge(state.modelConfigured?'Active':'Review')}</span></header><div class="chat-quick-prompts">${a[5].map(v=>`<button data-action="chat-quick-prompt" data-agent="${index}" data-prompt="${escapeAttr(v)}">${escapeHTML(v)}</button>`).join('')}</div><div class="chat-messages" id="chatMessages"><div class="message-row"><div class="message"><strong>${escapeHTML(a[0])}</strong><br>已连接 STA-100 统一任务协调器，消息将按页面规则分发给专业智能体。<time>当前会话</time></div></div>${messages.map(m=>renderAgentMessage(m,index)).join('')}</div><div class="chat-status" id="chatStatus" aria-live="polite"></div><div class="chat-input-row"><textarea class="textarea" id="chatInput" maxlength="32768" rows="2" placeholder="向 ${escapeAttr(a[0])} 发送消息，Enter 发送，Shift+Enter 换行"></textarea><button class="icon-button chat-send" data-action="send-chat" data-agent="${index}" title="发送消息" aria-label="发送消息">${icon('send')}</button></div></section></div>`;
 }
 
 function wireChatInput(index) {
@@ -1228,13 +1427,8 @@ async function sendAgentMessage(index, providedMessage='') {
     return;
   }
   const agentID = agentIDs[index];
-  const sources = [...document.querySelectorAll('.chat-source-option:checked')].map(item=>item.value);
-  if (!sources.length) {
-    toast('请选择来源','至少选择一个本次可用来源。','warning');
-    return;
-  }
-  const allowlist = sources.includes('联网检索') ? getAgentAllowlist(agentID) : [];
-  state.agentSourceSelections[agentID] = sources;
+  const sources = ['本地业务数据库','客户私有知识库','联网检索'];
+  const allowlist = getAgentAllowlist(agentID);
   const history = state.agentChats[agentID] || (state.agentChats[agentID] = []);
   history.push({role:'user',text:message,sources,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
   refreshAgentChat(index);
@@ -1244,8 +1438,9 @@ async function sendAgentMessage(index, providedMessage='') {
   if (sendButton) sendButton.disabled = true;
   applyIcons();
   try {
-    const result = await apiFetch('/api/v1/agents/chat', {method:'POST', body:JSON.stringify({agentId:agentID,message,sessionKey:`sta100-${agentID}`,sources,allowlist})});
-    history.push({role:'agent',text:result.text || 'OpenClaw 未返回文本内容。',sources,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
+    const result = await apiFetch('/api/v1/assistant/query', {method:'POST', body:JSON.stringify({page:'agents',feature:'agent-chat',message,sessionKey:`sta100-${agentID}`,context:{targetAgent:agentID,allowlist}})});
+    applyTokenUsage(result.tokenUsage);
+    history.push({role:'agent',text:result.text || 'OpenClaw 未返回文本内容。',sources:result.usedAgents||[],time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
   } catch (error) {
     history.push({role:'agent',text:`调用失败：${error.message}`,error:true,retry:message,sources,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
   }
@@ -1258,7 +1453,7 @@ function openAgentAllowlist(index) {
   openDrawer({title:'联网来源白名单',eyebrow:`${agents[index][0]} / ${agentID}`,body:`<div class="form-field"><label>允许访问的域名</label><textarea class="textarea allowlist-editor" id="agentAllowlist" maxlength="2000" placeholder="每行一个域名，不含协议和路径">${escapeHTML(domains)}</textarea><small>每行一个域名，例如 eur-lex.europa.eu。禁止填写 http://、路径、端口或通配符。</small></div><div class="source-policy-note">${icon('info')}当前白名单会作为来源约束提交给 Agent；联网工具接入后还需在工具调用层执行同一白名单，形成强制访问边界。</div><div class="inline-actions" style="margin-top:16px"><button class="button" data-action="close-drawer">取消</button><button class="button primary" data-action="save-agent-allowlist" data-agent="${index}">${icon('check')}保存白名单</button></div>`});
 }
 
-function saveAgentAllowlist(index) {
+async function saveAgentAllowlist(index) {
   const agentID = agentIDs[index];
   const domains = formText('agentAllowlist').split(/\r?\n/).map(v=>v.trim().toLowerCase()).filter(Boolean);
   const validDomain = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -1272,18 +1467,17 @@ function saveAgentAllowlist(index) {
     return;
   }
   state.agentInternetAllowlists[agentID] = [...new Set(domains)];
-  localStorage.setItem('sta100-agent-allowlists', JSON.stringify(state.agentInternetAllowlists));
-  closeDrawer();
-  toast('白名单已保存',`${agents[index][0]} 允许 ${state.agentInternetAllowlists[agentID].length} 个联网来源。`);
+  try { await savePreferences(); localStorage.removeItem('sta100-agent-allowlists'); closeDrawer(); toast('白名单已保存',`${agents[index][0]} 允许 ${state.agentInternetAllowlists[agentID].length} 个联网来源。`); }
+  catch(error) { toast('白名单保存失败',error.message,'warning'); }
 }
 
 function newCustomerForm(customer) {
   const c=customer||{};
   state.formContext = { type: 'customer', id: c.id || '' };
-  openModal({title:customer?'编辑客户':'新建客户',eyebrow:'客户档案',body:`<div class="form-grid"><div class="form-field full"><label>从名片或照片识别</label><button class="upload-zone" data-action="mock-ocr" style="min-height:92px">${icon('scan-line')}<span>选择图片后识别并填充字段</span></button></div><div class="form-section"><h3>基本信息</h3><p>列表字段可配置，详情页保留全部字段。</p></div>${inputField('客户名称',c.name||'',true,false,'text','customerName')}${selectField('客户类型',['Distributor','Importer','Customer','Reseller','Integrator','Supplier','Other'],false,'customerTypeForm',c.type||'Customer')}${inputField('主电话',c.phone||'',true,false,'tel','customerPhone')}${inputField('网站',c.website||'',false,false,'url','customerWebsite')}${inputField('账单国家',c.country||'',true,false,'text','customerCountryForm')}${inputField('账单城市',c.city||'',false,false,'text','customerCity')}${inputField('联系人',c.contact||'',false,false,'text','customerContact')}${inputField('联系邮箱',c.email||'',false,false,'email','customerEmail')}${selectField('评级',['Prospect','Active','Acquired','Market Failed'],false,'customerRating',c.rating||'Prospect')}${selectField('来源',['展会','电话','朋友介绍','拜访','互联网线索','客户转介绍','其它'],false,'customerSource',c.source||'其它')}${inputField('负责人',c.owner||'Donald',false,false,'text','customerOwner')}${inputField('描述',c.description||'',false,true,'text','customerDescription')}</div>`,footer:formFooter(customer?'保存修改':'创建客户','save-customer')});
+  openModal({title:customer?'编辑客户':'新建客户',eyebrow:'客户档案',body:`<div class="form-grid"><div class="form-field full"><label>从名片或照片识别</label><button class="upload-zone" data-action="mock-ocr" style="min-height:92px">${icon('scan-line')}<span>选择图片后识别并填充字段</span></button></div><div class="form-section"><h3>基本信息</h3><p>列表字段可配置，详情页保留全部字段。</p></div>${inputField('客户名称',c.name||'',true,false,'text','customerName')}${selectField('客户类型',['Distributor','Importer','Customer','Reseller','Integrator','Supplier','Other'],false,'customerTypeForm',c.type||'Customer')}${inputField('主电话',c.phone||'',true,false,'tel','customerPhone')}${inputField('网站',c.website||'',false,false,'url','customerWebsite')}${inputField('账单国家',c.country||'',true,false,'text','customerCountryForm')}${inputField('账单城市',c.city||'',false,false,'text','customerCity')}${inputField('联系人',c.contact||'',false,false,'text','customerContact')}${inputField('联系邮箱',c.email||'',false,false,'email','customerEmail')}${selectField('评级',['Prospect','Active','Acquired','Market Failed'],false,'customerRating',c.rating||'Prospect')}${selectField('来源',['展会','电话','朋友介绍','拜访','互联网线索','客户转介绍','其它'],false,'customerSource',c.source||'其它')}${inputField('负责人',c.owner||'Donald',false,false,'text','customerOwner')}${inputField('描述',c.description||'',false,true,'text','customerDescription')}${customer?`<div class="form-section"><h3>历史沟通记录</h3><p>沟通记录独立保存且只能追加，编辑客户不会覆盖历史。</p></div><div class="form-field full"><button type="button" class="button" data-action="customer-communications" data-id="${escapeAttr(c.id)}">${icon('messages-square')}查看或新增沟通记录</button></div>`:''}</div>`,footer:formFooter(customer?'保存修改':'创建客户','save-customer')});
 }
 
-function customerDetail(id, tab='overview') {
+async function customerDetail(id, tab='overview') {
   const c=customers.find(x=>x.id===id);
   if (!c) return;
   const tabs = [['overview','概览'],['contacts','联系人'],['quotes','报价单'],['orders','订单'],['documents','单据'],['activity','沟通记录']];
@@ -1291,14 +1485,46 @@ function customerDetail(id, tab='overview') {
   const relatedQuotes = quotes.filter(q=>q.customer===c.name);
   const relatedOrders = orders.filter(o=>o.customer===c.name);
   const relatedDocuments = documents.filter(d=>d.customer===c.name);
+  if (tab === 'activity' && !Array.isArray(state.customerCommunications[id])) {
+    try {
+      const result = await apiFetch(`/api/v1/accounts/${encodeURIComponent(id)}/communications`);
+      state.customerCommunications[id] = result.items || [];
+    } catch (error) {
+      toast('沟通记录加载失败',error.message,'warning');
+      state.customerCommunications[id] = [];
+    }
+  }
+  const communications = state.customerCommunications[id] || [];
   let content = '';
   if (tab === 'quotes') content = `<div class="related-list">${relatedQuotes.map(q=>`<button class="related-record" data-action="quote-detail" data-id="${escapeAttr(q.id)}"><span>${icon('file-text')}<strong>${escapeHTML(q.id)}</strong></span><span>${escapeHTML(q.subject)}</span><span>${escapeHTML(q.value)}</span>${badge(q.status)}</button>`).join('') || `<div class="empty-state"><p>暂无关联报价单</p></div>`}</div>`;
   else if (tab === 'orders') content = `<div class="related-list">${relatedOrders.map(o=>`<button class="related-record" data-action="order-detail" data-id="${escapeAttr(o.id)}"><span>${icon('package')}<strong>${escapeHTML(o.id)}</strong></span><span>${escapeHTML(o.products)}</span><span>${escapeHTML(o.value)}</span>${badge(o.status)}</button>`).join('') || `<div class="empty-state"><p>暂无关联订单</p></div>`}</div>`;
   else if (tab === 'documents') content = `<div class="related-list">${relatedDocuments.map(d=>`<button class="related-record" data-action="document-detail" data-id="${escapeAttr(d.id)}"><span>${icon('file-check-2')}<strong>${escapeHTML(d.id)}</strong></span><span>${escapeHTML(d.order)}</span><span>${escapeHTML(d.template)}</span>${badge(d.status)}</button>`).join('') || `<div class="empty-state"><p>暂无关联单据</p></div>`}</div>`;
   else if (tab === 'contacts') content = `<div class="detail-grid">${[['联系人',c.contact],['电话',c.phone],['邮箱',c.email],['网站',c.website||'未填写'],['国家/城市',`${c.country}${c.city?' / '+c.city:''}`],['来源',c.source||'未填写']].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${escapeHTML(v)}</strong></div>`).join('')}</div>`;
-  else if (tab === 'activity') content = `<div class="timeline"><div class="timeline-item"><h4>客户档案已更新</h4><p>${escapeHTML(c.updated)} · ${escapeHTML(c.owner)}</p></div><div class="timeline-item"><h4>关联业务记录 ${relatedQuotes.length + relatedOrders.length + relatedDocuments.length} 条</h4><p>报价单、订单和单据均可从对应标签进入详情。</p></div><div class="timeline-item"><h4>客户来源：${escapeHTML(c.source||'未填写')}</h4><p>来源字段用于后续渠道转化统计。</p></div></div>`;
+  else if (tab === 'activity') content = `<div class="spread communication-head"><div><strong>历史沟通记录</strong><p class="secondary-text">记录只能追加，不能修改或删除。</p></div><button class="button primary small" data-action="new-customer-communication" data-id="${escapeAttr(c.id)}">${icon('message-square-plus')}新增沟通</button></div>${communications.length?`<div class="timeline communication-timeline">${communications.map(item=>`<div class="timeline-item"><div class="spread"><h4>${escapeHTML(item.subject||item.type)}</h4><span class="badge blue">${escapeHTML(item.type)}</span></div><p class="communication-content">${escapeHTML(item.content)}</p><small>${escapeHTML(String(item.occurredAt||'').replace('T',' '))}${item.contact?` · ${escapeHTML(item.contact)}`:''} · 由 ${escapeHTML(item.createdBy)} 记录</small></div>`).join('')}</div>`:`<div class="empty-state panel">${icon('messages-square')}<div><h3>暂无沟通记录</h3><p>新增后将永久保留在本机业务数据库中。</p></div></div>`}`;
   else content = `<div class="detail-grid">${[['客户编号',c.id],['客户类型',c.type],['国家',c.country],['城市',c.city||'未填写'],['负责人',c.owner],['主联系人',c.contact],['电话',c.phone],['邮箱',c.email],['来源',c.source||'未填写'],['订单数',String(c.orders)],['累计金额',c.total],['最近更新',c.updated]].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${escapeHTML(v)}</strong></div>`).join('')}</div><div class="divider-title" style="margin:20px 0 14px">最近业务记录</div><div class="filter-row"><button class="button small" data-customer-tab="quotes" data-customer-id="${escapeAttr(c.id)}">报价单 ${relatedQuotes.length}</button><button class="button small" data-customer-tab="orders" data-customer-id="${escapeAttr(c.id)}">订单 ${relatedOrders.length}</button><button class="button small" data-customer-tab="documents" data-customer-id="${escapeAttr(c.id)}">单据 ${relatedDocuments.length}</button></div>`;
   openDrawer({title:c.name,eyebrow:`客户 / ${c.id}`,body:`${tabBar}<div class="spread" style="margin-bottom:14px"><span>${badge(c.rating)}</span><div class="inline-actions"><button class="button small" data-action="edit-customer" data-id="${escapeAttr(c.id)}">${icon('pencil')}编辑</button><button class="button primary small" data-action="new-quote" data-customer="${escapeAttr(c.name)}">${icon('file-plus-2')}新建报价</button><button class="button danger small" data-action="delete-customer" data-id="${escapeAttr(c.id)}">${icon('trash-2')}删除</button></div></div>${content}`});
+}
+
+function customerCommunicationForm(customerID) {
+  const customer=customers.find(item=>item.id===customerID);
+  if(!customer)return;
+  closeDrawer();
+  const now=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+  openModal({title:'新增沟通记录',eyebrow:`${customer.name} / 只能追加`,body:`<div class="form-grid">${selectField('沟通方式',['电话','邮件','微信','会议','拜访','短信','其它'],false,'communicationType','电话')}${inputField('沟通时间',now,true,false,'datetime-local','communicationOccurredAt')}${inputField('主题','',false,true,'text','communicationSubject')}${inputField('联系人',customer.contact||'',false,true,'text','communicationContact')}<div class="form-field full"><label>沟通内容 <span class="required">*</span></label><textarea class="textarea" id="communicationContent" maxlength="10000" placeholder="记录客户反馈、结论和后续事项"></textarea><small>保存后不可修改或删除，请确认内容准确。</small></div></div>`,footer:`<button class="button" data-action="cancel-customer-communication" data-id="${escapeAttr(customerID)}">取消</button><button class="button primary" data-action="save-customer-communication" data-id="${escapeAttr(customerID)}">${icon('plus')}追加记录</button>`});
+}
+
+async function saveCustomerCommunication(customerID) {
+  const content=formText('communicationContent');
+  const occurredAt=formText('communicationOccurredAt');
+  if(!content||!occurredAt){toast('保存失败','沟通时间和沟通内容为必填项。','warning');return;}
+  const payload={type:formText('communicationType'),subject:formText('communicationSubject'),content,contact:formText('communicationContact'),occurredAt};
+  try {
+    const record=await apiFetch(`/api/v1/accounts/${encodeURIComponent(customerID)}/communications`,{method:'POST',body:JSON.stringify(payload)});
+    state.customerCommunications[customerID]=[record,...(state.customerCommunications[customerID]||[])];
+    closeModal();
+    await customerDetail(customerID,'activity');
+    toast('沟通记录已追加','该记录已永久保留，不能修改或删除。');
+  } catch(error) { toast('沟通记录保存失败',error.message,'warning'); }
 }
 
 function newQuoteForm(quote, customerName='') {
@@ -1331,42 +1557,45 @@ function orderDetail(id) {
 
 function generateDocs(orderId='', document) {
   const d=document||{}; state.formContext={type:'document',id:d.id||''};
-  openModal({title:document?'编辑单据':'生成外贸单据',eyebrow:orderId==='all'?'一键生成全套':`订单 / ${orderId||d.order||''}`,body:`<div class="form-grid">${relationField('关联订单','documentOrder',orders.map(o=>`${o.id} · ${o.customer}`),d.order?`${d.order} · ${d.customer}`:orderId&&orderId!=='all'?`${orderId} · ${orders.find(o=>o.id===orderId)?.customer||''}`:'')}${selectField('单据类型',['PI','CI','PL','报关单'],false,'documentTypeForm',d.type||'PI')}${selectField('模板版本',['各类型默认模板','STRATRONIX 标准模板组 v3'],false,'documentTemplate',d.template||'各类型默认模板')}${selectField('输出语言',['英文','中文 / 英文双语'],false,'documentLanguage','英文')}<div class="form-section"><h3>生成规则</h3><p>系统读取客户、订单和产品快照，生成后先进入待复核状态；缺失字段会逐项提示。</p></div><div class="model-warning full"><span>${icon('info')} 报关单的申报要素、监管条件和最终格式需在正式数据提供后校准。</span></div></div>`,footer:formFooter(document?'保存修改':'生成并预览','save-document')});
+  openModal({title:document?'编辑单据':'生成外贸单据',eyebrow:orderId==='all'?'一键生成全套':`订单 / ${orderId||d.order||''}`,body:`<div class="form-grid">${relationField('关联订单','documentOrder',orders.map(o=>`${o.id} · ${o.customer}`),d.order?`${d.order} · ${d.customer}`:orderId&&orderId!=='all'?`${orderId} · ${orders.find(o=>o.id===orderId)?.customer||''}`:'')}${selectField('单据类型',document?['PI','CI','PL','报关单']:['PI','CI','PL','报关单','全套（PI + CI + PL + 报关单）'],false,'documentTypeForm',d.type||(orderId==='all'?'全套（PI + CI + PL + 报关单）':'PI'))}${selectField('模板版本',['各类型默认模板','STRATRONIX 标准模板组 v3'],false,'documentTemplate',d.template||'各类型默认模板')}${selectField('输出语言',['英文','中文 / 英文双语'],false,'documentLanguage','英文')}<div class="form-section"><h3>生成规则</h3><p>系统读取客户、订单和产品快照，生成后先进入待复核状态；缺失字段会逐项提示。</p></div><div class="model-warning full"><span>${icon('info')} 报关单的申报要素、监管条件和最终格式需在正式数据提供后校准。</span></div></div>`,footer:formFooter(document?'保存修改':'生成并预览','save-document')});
 }
 
-function saveCustomer() {
+async function saveCustomer() {
   const name=formText('customerName');
   if (!name || !formText('customerCountryForm')) { toast('保存失败','客户名称和账单国家为必填项。','warning'); return; }
   const existing=customers.find(c=>c.id===state.formContext?.id);
-  const record=existing||{id:nextRecordId('ACC',customers),orders:0,total:'EUR 0',updated:nowText()};
-  Object.assign(record,{name,type:formText('customerTypeForm'),phone:formText('customerPhone'),website:formText('customerWebsite'),country:formText('customerCountryForm'),city:formText('customerCity'),contact:formText('customerContact'),email:formText('customerEmail'),rating:formText('customerRating'),source:formText('customerSource'),owner:formText('customerOwner'),description:formText('customerDescription'),updated:nowText(),archived:false});
-  if (!existing) customers.unshift(record);
-  closeModal(); renderPage(); toast(existing?'客户已更新':'客户已创建',`${record.name} 已保存到客户档案。`);
+  const payload={...(existing||{}),name,type:formText('customerTypeForm'),phone:formText('customerPhone'),website:formText('customerWebsite'),country:formText('customerCountryForm'),city:formText('customerCity'),contact:formText('customerContact'),email:formText('customerEmail'),rating:formText('customerRating'),source:formText('customerSource'),owner:formText('customerOwner'),description:formText('customerDescription'),archived:false};
+  try {
+    const record=await apiFetch(existing?`/api/v1/accounts/${encodeURIComponent(existing.id)}`:'/api/v1/accounts',{method:existing?'PATCH':'POST',body:JSON.stringify(payload)});
+    upsertRecord(customers,record); closeModal(); renderPage(); toast(existing?'客户已更新':'客户已创建',`${record.name} 已保存到本地数据库。`);
+  } catch(error) { toast('保存失败',error.message,'warning'); }
 }
 
-function saveQuote() {
+async function saveQuote() {
   const subject=formText('quoteSubject'); const customer=formText('quoteCustomer');
   if (!subject || !customer || !customers.some(c=>c.name===customer&&!c.archived)) { toast('保存失败','请填写主题，并从客户搜索结果中选择有效客户。','warning'); return; }
   if (!state.quoteDraftLines.length || state.quoteDraftLines.some(line => Number(line.quantity) < 1 || Number(line.unitPrice) < 0)) { toast('保存失败','报价至少需要一条有效产品明细，数量和单价不能为负数。','warning'); return; }
   const existing=quotes.find(q=>q.id===state.formContext?.id);
-  const currency=formText('quoteCurrency')||'EUR'; const total=quoteDraftTotal();
-  const record=existing||{id:nextRecordId('QUO-2026',quotes),status:'Draft',owner:'Donald'};
-  Object.assign(record,{subject,customer,valid:formText('quoteValid'),currency,lines:state.quoteDraftLines.map(line=>({...line,quantity:Number(line.quantity),unitPrice:Number(line.unitPrice),discount:Number(line.discount||0),amount:lineSubtotal(line,true)})),products:lineSummary(state.quoteDraftLines),value:formatMoney(total,currency),updated:nowText()});
-  if (!existing) quotes.unshift(record);
-  closeModal(); renderPage(); toast(existing?'报价单已更新':'报价草稿已创建',`${record.id} 已保存。`);
+  const currency=formText('quoteCurrency')||'EUR';
+  const payload={...(existing||{}),subject,customer,valid:formText('quoteValid'),currency,freight:formNumber('quoteFreight'),tax:formNumber('quoteTax'),terms:formText('quoteTerms'),lines:state.quoteDraftLines.map(line=>({...line,quantity:Number(line.quantity),unitPrice:Number(line.unitPrice),discount:Number(line.discount||0) }))};
+  try {
+    const record=await apiFetch(existing?`/api/v1/quotes/${encodeURIComponent(existing.id)}`:'/api/v1/quotes',{method:existing?'PATCH':'POST',body:JSON.stringify(payload)});
+    upsertRecord(quotes,record); closeModal(); renderPage(); toast(existing?'报价单已更新':'报价草稿已创建',`${record.id} 已保存到本地数据库。`);
+  } catch(error) { toast('保存失败',error.message,'warning'); }
 }
 
-function saveOrder() {
+async function saveOrder() {
   const customer=formText('orderCustomer'); const quoteValue=formText('orderQuote');
   if (!customer || !customers.some(c=>c.name===customer&&!c.archived)) { toast('保存失败','请从客户搜索结果中选择有效客户。','warning'); return; }
   if (!state.orderDraftLines.length || state.orderDraftLines.some(line => Number(line.quantity) < 1 || Number(line.unitPrice) < 0)) { toast('保存失败','订单至少需要一条有效产品明细，数量和成交单价不能为负数。','warning'); return; }
   const insufficient=state.orderDraftLines.find(line=>Number(line.quantity)>Number(lineProduct(line)?.stock||0));
   if (insufficient) { toast('保存失败',`${lineProduct(insufficient)?.name||'产品'} 数量超过当前库存 ${lineProduct(insufficient)?.stock||0}。`,'warning'); return; }
   const existing=orders.find(o=>o.id===state.formContext?.id);
-  const record=existing||{id:nextRecordId('SO-2026',orders),status:'Confirmed',progress:0};
-  Object.assign(record,{customer,quote:quoteValue.split(' · ')[0]||quoteValue,po:formText('orderPO'),delivery:formText('orderDelivery'),terms:formText('orderTerms'),lines:state.orderDraftLines.map(line=>({...line,quantity:Number(line.quantity),unitPrice:Number(line.unitPrice),amount:lineSubtotal(line)})),products:lineSummary(state.orderDraftLines),value:formatMoney(orderDraftTotal(),'EUR'),updated:nowText()});
-  if (!existing) orders.unshift(record);
-  refreshCustomerAggregates(); closeModal(); renderPage(); toast(existing?'订单已更新':'订单已创建',`${record.id} 已保存，已关联 ${record.lines.length} 个产品明细。`);
+  const payload={...(existing||{}),customer,quote:quoteValue.split(' · ')[0]||quoteValue,po:formText('orderPO'),delivery:formText('orderDelivery'),terms:formText('orderTerms'),currency:existing?.currency||'EUR',status:existing?.status||'Confirmed',progress:Number(existing?.progress||0),lines:state.orderDraftLines.map(line=>({...line,quantity:Number(line.quantity),unitPrice:Number(line.unitPrice)}))};
+  try {
+    const record=await apiFetch(existing?`/api/v1/orders/${encodeURIComponent(existing.id)}`:'/api/v1/orders',{method:existing?'PATCH':'POST',body:JSON.stringify(payload)});
+    upsertRecord(orders,record); await loadBusinessData(true); closeModal(); renderPage(); toast(existing?'订单已更新':'订单已创建',`${record.id} 已保存，已关联 ${record.lines.length} 个产品明细。`);
+  } catch(error) { toast('保存失败',error.message,'warning'); }
 }
 
 function refreshCustomerAggregates() {
@@ -1378,27 +1607,54 @@ function refreshCustomerAggregates() {
   });
 }
 
-function saveDocument() {
+async function saveDocument() {
   const orderValue=formText('documentOrder'); const orderId=orderValue.split(' · ')[0]; const order=orders.find(o=>o.id===orderId);
   if (!order) { toast('保存失败','请从订单搜索结果中选择有效订单。','warning'); return; }
   const existing=documents.find(d=>d.id===state.formContext?.id);
   const type=formText('documentTypeForm');
-  const record=existing||{id:`${type}-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${String(documents.length+1).padStart(3,'0')}`,status:'Review'};
-  Object.assign(record,{type,customer:order.customer,order:order.id,template:formText('documentTemplate'),language:formText('documentLanguage'),lines:businessLines(order).map(line=>({...line,productName:lineProduct(line)?.name||line.productId,amount:line.amount??lineSubtotal(line)})),value:order.value,updated:nowText()});
-  if (!existing) documents.unshift(record);
-  closeModal(); renderPage(); toast(existing?'单据已更新':'单据已生成',`${record.id} 已保存为待复核状态。`);
+  const payload={...(existing||{}),type,customer:order.customer,order:order.id,template:formText('documentTemplate'),language:formText('documentLanguage'),status:existing?.status||'Review',lines:businessLines(order),value:order.value};
+  try {
+    if(!existing&&type.startsWith('全套')){
+      const result=await apiFetch(`/api/v1/orders/${encodeURIComponent(order.id)}/documents`,{method:'POST',body:JSON.stringify({types:['PI','CI','PL','报关单'],template:payload.template,language:payload.language})});
+      result.items.forEach(record=>upsertRecord(documents,record));closeModal();renderPage();toast('全套单据已生成',`${result.total} 份单据已进入待复核状态。`);return;
+    }
+    const record=await apiFetch(existing?`/api/v1/documents/${encodeURIComponent(existing.id)}`:'/api/v1/documents',{method:existing?'PATCH':'POST',body:JSON.stringify(payload)});
+    upsertRecord(documents,record); closeModal(); renderPage(); toast(existing?'单据已更新':'单据已生成',`${record.id} 已保存为待复核状态。`);
+  } catch(error) { toast('保存失败',error.message,'warning'); }
 }
 
-function deleteCustomer(id) {
+async function deleteCustomer(id) {
   const customer=customers.find(c=>c.id===id); if (!customer) return;
   if (!window.confirm(`确定归档客户 ${customer.name} 吗？关联报价、订单和单据会保留。`)) return;
-  customer.archived=true; closeDrawer(); renderPage(); toast('客户已归档','关联业务记录仍然保留，可用于历史查询。');
+  try { await apiFetch(`/api/v1/accounts/${encodeURIComponent(id)}`,{method:'DELETE'}); customer.archived=true; closeDrawer(); renderPage(); toast('客户已归档','关联业务记录仍然保留，可用于历史查询。'); } catch(error) { toast('归档失败',error.message,'warning'); }
 }
-function deleteQuote(id) { if (!window.confirm('确定删除这份报价单吗？')) return; const index=quotes.findIndex(q=>q.id===id); if(index>=0) quotes.splice(index,1); closeDrawer(); renderPage(); toast('报价单已删除','前端示例数据已移除。'); }
-function deleteOrder(id) { if (!window.confirm('确定删除这份订单吗？')) return; const index=orders.findIndex(o=>o.id===id); if(index>=0) orders.splice(index,1); refreshCustomerAggregates(); closeDrawer(); renderPage(); toast('订单已删除','前端示例数据已移除。'); }
-function deleteDocument(id) { if (!window.confirm('确定删除这份单据吗？')) return; const index=documents.findIndex(d=>d.id===id); if(index>=0) documents.splice(index,1); closeDrawer(); renderPage(); toast('单据已删除','前端示例数据已移除。'); }
-function downloadQuote(id) { const q=quotes.find(item=>item.id===id); if(!q)return; downloadText(`${q.id}.txt`,`报价单 ${q.id}\n客户：${q.customer}\n主题：${q.subject}\n金额：${q.value}\n有效期：${q.valid}`); toast('报价单已下载',`${q.id} 已导出为文本预览。`); }
-function downloadDocument(id) { const d=documents.find(item=>item.id===id); if(!d)return; downloadText(`${d.id}.txt`,`单据 ${d.id}\n类型：${d.type}\n客户：${d.customer}\n订单：${d.order}\n模板：${d.template}`); toast('单据已下载',`${d.id} 已导出为文本预览。`); }
+async function deleteQuote(id) { if (!window.confirm('确定归档这份报价单吗？')) return; try { await apiFetch(`/api/v1/quotes/${encodeURIComponent(id)}`,{method:'DELETE'}); removeRecord(quotes,id); closeDrawer(); renderPage(); toast('报价单已归档','变更已写入本地数据库。'); } catch(error) { toast('归档失败',error.message,'warning'); } }
+async function deleteOrder(id) { if (!window.confirm('确定归档这份订单吗？')) return; try { await apiFetch(`/api/v1/orders/${encodeURIComponent(id)}`,{method:'DELETE'}); removeRecord(orders,id); await loadBusinessData(true); closeDrawer(); renderPage(); toast('订单已归档','变更已写入本地数据库。'); } catch(error) { toast('归档失败',error.message,'warning'); } }
+async function deleteDocument(id) { if (!window.confirm('确定归档这份单据吗？')) return; try { await apiFetch(`/api/v1/documents/${encodeURIComponent(id)}`,{method:'DELETE'}); removeRecord(documents,id); closeDrawer(); renderPage(); toast('单据已归档','变更已写入本地数据库。'); } catch(error) { toast('归档失败',error.message,'warning'); } }
+async function downloadQuote(id) {
+  try { await apiFetch(`/api/v1/quotes/${encodeURIComponent(id)}/download`); }
+  catch(error) { toast('报价 PDF 暂不可生成',error.message,'warning'); }
+}
+async function downloadDocument(id) {
+  try { await apiFetch(`/api/v1/documents/${encodeURIComponent(id)}/download`); }
+  catch(error) { toast('单据文件暂不可生成',error.message,'warning'); }
+}
+
+function openNotifications() {
+  const pendingFiles=files.filter(file=>file.status!=='Indexed');
+  const shippedOrders=orders.filter(order=>order.status==='Shipped');
+  const openClawOK=Boolean(state.systemHealth?.openclaw?.ok);
+  const entries=[];
+  if(pendingFiles.length) entries.push([`${pendingFiles.length} 份文件等待解析或复核`,'数据库 · 当前状态']);
+  if(shippedOrders.length) entries.push([`${shippedOrders.length} 个订单处于已发运状态`,'订单 · 当前状态']);
+  entries.push([openClawOK?'OpenClaw Gateway 当前可用':'OpenClaw Gateway 状态待检查','设置 · 实时健康状态']);
+  openDrawer({title:'通知',eyebrow:'当前系统状态',body:`<div class="timeline">${entries.map(([title,detail])=>`<div class="timeline-item"><h4>${escapeHTML(title)}</h4><p>${escapeHTML(detail)}</p></div>`).join('')}</div>`});
+}
+
+async function convertQuoteToOrder(id) {
+  try { const record=await apiFetch(`/api/v1/quotes/${encodeURIComponent(id)}/convert-order`,{method:'POST',body:'{}'}); upsertRecord(orders,record); await loadBusinessData(true); closeDrawer(); setPage('orders'); toast('订单已创建',`${record.id} 已保留报价来源和产品快照。`); }
+  catch(error) { toast('转换失败',error.message,'warning'); }
+}
 
 function templateCenter(kind) {
   const name={quote:'报价单',order:'订单',document:'单据'}[kind]||'业务';
@@ -1416,7 +1672,7 @@ function templateCenter(kind) {
   document.getElementById('templateFileInput')?.addEventListener('change',event=>handleTemplateFile(event.target.files?.[0],'file',kind));
 }
 
-function handleTemplateFile(file,mode,kind) {
+async function handleTemplateFile(file,mode,kind) {
   if(!file)return;
   const allowed=mode==='image'?/\.(jpe?g|png|webp)$/i:/\.(docx|xlsx|pdf|html?)$/i;
   if(!allowed.test(file.name)){toast('文件格式不支持',mode==='image'?'请选择 JPG、PNG 或 WebP 图片。':'请选择 DOCX、XLSX、PDF 或 HTML 模板。','warning');return;}
@@ -1424,15 +1680,14 @@ function handleTemplateFile(file,mode,kind) {
   const size=file.size>=1024*1024?`${(file.size/1024/1024).toFixed(1)} MB`:`${Math.max(1,Math.round(file.size/1024))} KB`;
   state.templateUploads.push({kind,mode,name:file.name,size,status:'waiting-api'});
   templateCenter(kind);
-  toast('本地文件校验通过','文件尚未上传，正在等待模板后端接口接入。','warning');
+  const form=new FormData();form.append('file',file);form.append('kind',kind);
+  try {await apiFetch(mode==='image'?'/api/v1/templates/image-recognition':'/api/v1/templates/upload',{method:'POST',body:form});}
+  catch(error){toast('模板暂不能处理',error.message,'warning');}
 }
 
-function templateAction(action) {
-  if (action === 'default') {
-    toast('模板已设为默认', '后续生成单据将优先使用该模板。');
-    return;
-  }
-  openModal({ title: '编辑模板', eyebrow: '模板中心 / 前端编辑', body: `<div class="form-grid">${inputField('模板名称', '欧洲渠道业务模板', true, true)}${selectField('适用单据', ['报价单','订单','PI','CI','PL','报关单'])}${inputField('版本', 'v2')}${selectField('状态', ['启用','待校正','停用'])}<div class="form-field full"><label>字段映射说明</label><textarea class="textarea">客户名称、地址、产品明细、币种、金额、交付和贸易条款</textarea></div></div>`, footer: formFooter('保存模板') });
+async function templateAction(action) {
+  try {await apiFetch(`/api/v1/templates/${encodeURIComponent(`${state.templateKind}-${action}`)}`,{method:'PATCH',body:JSON.stringify({action,kind:state.templateKind})});}
+  catch(error){toast('模板操作暂不可用',error.message,'warning');}
 }
 
 function documentDetail(id) {
@@ -1449,13 +1704,49 @@ function newProductForm(product) {
   openModal({title:product?'编辑产品':'新建产品',eyebrow:'产品主数据',body:`<div class="form-grid">${inputField('产品名称',p.name||'',true,false,'text','productName')}${inputField('产品编码',p.id||'',true,false,'text','productID')}${selectField('产品类别',['智能设备','智能骑行','整车方案','配件','服务'],false,'productCategory',p.category||'智能设备')}${inputField('制造商',p.manufacturer||'STRATRONIX',false,false,'text','productManufacturer')}${inputField('HS CODE',p.hs||'',true,false,'text','productHS')}${inputField('库存量',p.stock||'0',false,false,'number','productStock')}${inputField('默认单价',p.price||'',true,false,'text','productPrice')}${inputField('产品描述',p.desc||'',false,true,'text','productDescription')}${inputField('标签','欧洲 / 智能设备',false,true,'text','productTags')}</div>`,footer:formFooter(product?'保存修改':'创建产品','save-product')});
 }
 
-function saveProduct() {
+async function saveProduct() {
   const name=formText('productName'); const id=formText('productID'); if(!name||!id){toast('保存失败','产品名称和编码为必填项。','warning');return;}
-  const existing=products.find(p=>p.id===state.formContext?.id); const record=existing||{status:'Active'};
-  Object.assign(record,{id,name,category:formText('productCategory'),manufacturer:formText('productManufacturer'),hs:formText('productHS'),stock:formNumber('productStock'),price:formText('productPrice'),desc:formText('productDescription'),tags:formText('productTags')});
-  if(!existing)products.unshift(record); closeModal(); renderPage(); toast(existing?'产品已更新':'产品已创建',`${record.name} 已保存。`);
+  const existing=products.find(p=>p.id===state.formContext?.id);
+  const payload={...(existing||{}),id,name,category:formText('productCategory'),manufacturer:formText('productManufacturer'),hs:formText('productHS'),stock:formNumber('productStock'),price:formText('productPrice'),desc:formText('productDescription'),tags:formText('productTags'),status:existing?.status||'Active'};
+  try { const record=await apiFetch(existing?`/api/v1/products/${encodeURIComponent(existing.id)}`:'/api/v1/products',{method:existing?'PATCH':'POST',body:JSON.stringify(payload)}); upsertRecord(products,record); closeModal(); renderPage(); toast(existing?'产品已更新':'产品已创建',`${record.name} 已保存到本地数据库。`); }
+  catch(error) { toast('保存失败',error.message,'warning'); }
 }
-function deleteProduct(id) { if(!window.confirm('确定删除该产品吗？'))return; const index=products.findIndex(p=>p.id===id); if(index>=0)products.splice(index,1); closeDrawer(); renderPage(); toast('产品已删除','前端示例数据已移除。'); }
+async function deleteProduct(id) { if(!window.confirm('确定停用该产品吗？'))return; try { await apiFetch(`/api/v1/products/${encodeURIComponent(id)}`,{method:'DELETE'}); const product=products.find(item=>item.id===id); if(product)product.status='Inactive'; closeDrawer(); renderPage(); toast('产品已停用','产品主数据已更新。'); } catch(error) { toast('停用失败',error.message,'warning'); } }
+
+function productImportModal() {
+  openModal({title:'批量导入产品',eyebrow:'产品库 / 文件导入',body:`<input id="productImportInput" type="file" accept=".xlsx,.csv" hidden><div class="upload-zone"><div><span class="upload-icon">${icon('file-up')}</span><h3>选择产品导入文件</h3><p>支持 XLSX 或 CSV。导入模板、必填字段、重复编码和错误回执规则尚待确认。</p><button type="button" class="button primary" data-action="choose-product-import">${icon('folder-open')}选择文件</button></div></div>`,footer:`<button class="button" data-action="close-modal">关闭</button>`});
+  document.getElementById('productImportInput')?.addEventListener('change',async event=>{
+    const file=event.target.files?.[0];if(!file)return;
+    const form=new FormData();form.append('file',file);
+    try {await apiFetch('/api/v1/products/import',{method:'POST',body:form});}
+    catch(error){toast('产品批量导入暂不可用',error.message,'warning');}
+  });
+}
+
+function customerOCRModal() {
+  openModal({title:'识别客户名片或照片',eyebrow:'客户档案 / OCR',body:`<input id="customerOCRInput" type="file" accept="image/jpeg,image/png,image/webp" hidden><div class="upload-zone"><div><span class="upload-icon">${icon('scan-line')}</span><h3>选择客户名片或照片</h3><p>图片只会提交到本机 Go 接口；OCR 引擎、字段映射和置信度规则尚待确认。</p><button type="button" class="button primary" data-action="choose-customer-ocr">${icon('image-up')}选择图片</button></div></div>`,footer:`<button class="button" data-action="close-modal">关闭</button>`});
+  document.getElementById('customerOCRInput')?.addEventListener('change',async event=>{
+    const file=event.target.files?.[0];if(!file)return;
+    const form=new FormData();form.append('file',file);
+    try {await apiFetch('/api/v1/accounts/ocr',{method:'POST',body:form});}
+    catch(error){toast('图片识别暂不可用',error.message,'warning');}
+  });
+}
+
+function dateFilterForm(module) {
+  const isQuote=module==='quote';
+  const from=isQuote?state.quoteDateFrom:state.orderDateFrom;
+  const to=isQuote?state.quoteDateTo:state.orderDateTo;
+  openModal({title:isQuote?'报价有效期筛选':'订单交付日期筛选',eyebrow:'日期范围',body:`<div class="form-grid">${inputField('开始日期',from,false,false,'date','dateFilterFrom')}${inputField('结束日期',to,false,false,'date','dateFilterTo')}</div>`,footer:`<button class="button" data-action="close-modal">取消</button><button class="button ghost" data-action="apply-date-filter" data-module="${module}" data-clear="true">清除</button><button class="button primary" data-action="apply-date-filter" data-module="${module}">${icon('check')}应用</button>`});
+}
+
+function applyDateFilter(module, clear=false) {
+  const from=clear?'':formText('dateFilterFrom');
+  const to=clear?'':formText('dateFilterTo');
+  if(from&&to&&from>to){toast('日期范围无效','开始日期不能晚于结束日期。','warning');return;}
+  if(module==='quote'){state.quoteDateFrom=from;state.quoteDateTo=to;}else{state.orderDateFrom=from;state.orderDateTo=to;}
+  closeModal();renderPage();
+}
 
 function productDetail(id) {
   const p=products.find(x=>x.id===id);
@@ -1464,39 +1755,106 @@ function productDetail(id) {
 }
 
 function uploadFileModal() {
-  openModal({title:'上传私有数据',eyebrow:'数据库 / 文件处理',body:`<div class="upload-zone" id="uploadZone"><div><span class="upload-icon">${icon('cloud-upload')}</span><h3>选择或拖入文件</h3><p>支持 PDF、DOCX、XLSX、CSV、TXT、MD、JPG、PNG；视频格式待调研确认。</p><button class="button primary" data-action="choose-file">选择文件</button></div></div><div class="form-grid" style="margin-top:14px">${selectField('数据区',['客户私有数据'])}${selectField('主分类',['自动识别','合同','报价单','产品手册','法规','产品资料','会议记录','客户资料','其它'])}${inputField('附加标签','',false,true)}<div class="form-field full"><small>上传后依次执行文件校验、文本/OCR 解析、AI 分类、标签建议、重复检查和索引；失败记录会保留并给出原因。</small></div></div>`,footer:formFooter('开始处理')});
+  state.selectedUploadFile=null;
+  openModal({title:'上传私有数据',eyebrow:'数据库 / 文件处理',body:`<input id="privateFileInput" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.jpg,.jpeg,.png" hidden><div class="upload-zone" id="uploadZone"><div><span class="upload-icon">${icon('cloud-upload')}</span><h3>选择或拖入文件</h3><p>支持 PDF、DOCX、XLSX、CSV、TXT、MD、JPG、PNG；单文件最大 50 MB。</p><button type="button" class="button primary" data-action="choose-file">选择文件</button><div id="selectedPrivateFile"></div></div></div><div class="form-grid" style="margin-top:14px"><div class="form-field"><label>数据区</label><input class="input" value="客户私有数据（本机）" readonly></div>${selectField('主分类',['自动识别','合同','报价单','产品手册','法规','产品资料','会议记录','客户资料','其它'],false,'privateFileCategory','自动识别')}${inputField('附加标签','',false,true,'text','privateFileTags')}<div class="form-field full"><small>当前后端完成格式、大小、SHA-256 去重和本机安全保存。文本/OCR 解析、AI 分类与索引等待客户原始数据格式后启用。</small></div></div>`,footer:formFooter('上传到本机','upload-private-file')});
   const zone=document.getElementById('uploadZone');
   ['dragenter','dragover'].forEach(ev=>zone.addEventListener(ev,e=>{e.preventDefault();zone.classList.add('dragover')}));
-  ['dragleave','drop'].forEach(ev=>zone.addEventListener(ev,e=>{e.preventDefault();zone.classList.remove('dragover')}));
+  zone.addEventListener('dragleave',e=>{e.preventDefault();zone.classList.remove('dragover')});
+  zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('dragover');selectPrivateFile(e.dataTransfer?.files?.[0])});
+  document.getElementById('privateFileInput').addEventListener('change',e=>selectPrivateFile(e.target.files?.[0]));
 }
 
-function filePreview(name) {
-  const f=files.find(x=>x.name===name);
+function selectPrivateFile(file) {
+  if(!file)return;
+  const allowed=/\.(pdf|docx|xlsx|csv|txt|md|jpe?g|png)$/i;
+  if(!allowed.test(file.name)){toast('文件格式不支持','请选择页面列出的文件格式。','warning');return;}
+  if(file.size>50*1024*1024){toast('文件过大','单文件不能超过 50 MB。','warning');return;}
+  state.selectedUploadFile=file;
+  const target=document.getElementById('selectedPrivateFile');
+  if(target)target.innerHTML=`<div class="upgrade-file" style="margin-top:12px"><span class="upload-icon">${icon('file-check-2')}</span><div><strong>${escapeHTML(file.name)}</strong><small>${formatBytes(file.size)} · 等待上传</small></div></div>`;
+  applyIcons();
+}
+
+async function uploadPrivateFile() {
+  const file=state.selectedUploadFile;
+  if(!file){toast('请选择文件','需要先选择或拖入一个文件。','warning');return;}
+  const form=new FormData();
+  form.append('file',file);
+  form.append('category',formText('privateFileCategory'));
+  form.append('tags',formText('privateFileTags'));
+  try {
+    const result=await apiFetch('/api/v1/private-files/upload',{method:'POST',body:form});
+    upsertRecord(files,result.item);
+    state.selectedUploadFile=null;
+    closeModal();renderPage();toast('文件已保存到本机',`${result.item.name} 当前状态：${result.item.status}`);
+  } catch(error) { toast('文件上传失败',error.message,'warning'); }
+}
+
+function filePreview(id) {
+  const f=files.find(x=>x.id===id);
   if (!f) return;
-  openDrawer({title:f.name,eyebrow:`${f.category} / 在线预览`,body:`<div class="spread"><span>${badge(f.status)}</span><div class="inline-actions"><button class="button small" data-action="file-download" data-name="${escapeAttr(f.name)}">${icon('download')}下载</button><button class="button small" data-action="file-edit" data-name="${escapeAttr(f.name)}">${icon('pencil')}编辑信息</button></div></div><div class="detail-grid" style="margin-top:15px">${[['主分类',f.category],['来源',f.source],['大小',f.size],['更新时间',f.updated],['标签',f.tags.join(' / ')],['索引状态',f.status]].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${escapeHTML(v)}</strong></div>`).join('')}</div><div class="empty-state panel" style="margin-top:16px">${icon('file-search')}<div><h3>文件预览区</h3><p>正式接入后按文件格式调用本地预览器；不支持的格式提供下载和 AI 摘要。</p><button class="button small" data-action="file-summary" data-name="${escapeAttr(f.name)}">${icon('sparkles')}查看 AI 摘要</button></div></div>`});
+  const previewable=f.mime==='application/pdf'||String(f.mime||'').startsWith('image/');
+  const preview=previewable?`<iframe title="${escapeAttr(f.name)}" src="/api/v1/private-files/${encodeURIComponent(f.id)}/content" style="width:100%;height:520px;border:1px solid var(--line);margin-top:16px;background:white"></iframe>`:`<div class="empty-state panel" style="margin-top:16px">${icon('file-search')}<div><h3>当前格式不支持内嵌预览</h3><p>可以下载原文件；摘要和索引需等待客户数据格式确认。</p><button class="button small" data-action="file-summary" data-id="${escapeAttr(f.id)}">${icon('sparkles')}查看摘要状态</button></div></div>`;
+  openDrawer({title:f.name,eyebrow:`${f.category} / 在线预览`,body:`<div class="spread"><span>${badge(f.status)}</span><div class="inline-actions"><button class="button small" data-action="file-download" data-id="${escapeAttr(f.id)}">${icon('download')}下载</button><button class="button small" data-action="file-edit" data-id="${escapeAttr(f.id)}">${icon('pencil')}编辑信息</button></div></div><div class="detail-grid" style="margin-top:15px">${[['主分类',f.category],['来源',f.source],['大小',f.size],['更新时间',f.updated],['标签',(f.tags||[]).join(' / ')||'无'],['索引状态',f.status]].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${escapeHTML(v)}</strong></div>`).join('')}</div>${preview}`});
 }
 
-function fileDownload(name) {
-  const f = files.find(item => item.name === name);
+function fileDownload(id) {
+  const f = files.find(item => item.id === id);
   if (!f) return;
-  downloadText(f.name + '.summary.txt', `文件：${f.name}\n分类：${f.category}\n来源：${f.source}\n索引状态：${f.status}`);
-  toast('文件下载已开始', f.name);
+  window.location.assign(`/api/v1/private-files/${encodeURIComponent(f.id)}/download`);
 }
 
-function fileEdit(name) {
-  const f = files.find(item => item.name === name);
+function fileEdit(id) {
+  const f = files.find(item => item.id === id);
   if (!f) return;
-  openModal({ title: '编辑文件信息', eyebrow: '数据库 / 文件元数据', body: `<div class="form-grid">${inputField('文件名', f.name, true, true)}${selectField('主分类', ['产品手册','合同','法规','产品资料','会议记录','客户资料','其它'], false, '', f.category)}${inputField('标签', f.tags.join(' / '), false, true)}${inputField('来源', f.source, false, true)}</div>`, footer: formFooter('保存信息') });
+  state.formContext={type:'private-file',id:f.id};
+  openModal({ title: '编辑文件信息', eyebrow: '数据库 / 文件元数据', body: `<div class="form-grid">${inputField('文件名',f.name,true,true,'text','privateFileName')}${selectField('主分类',['待分类','产品手册','合同','报价单','法规','产品资料','会议记录','客户资料','其它'],false,'privateFileEditCategory',f.category)}${inputField('标签',(f.tags||[]).join(' / '),false,true,'text','privateFileEditTags')}${inputField('来源',f.source,false,true,'text','privateFileSource')}</div>`, footer: formFooter('保存信息','save-file-metadata') });
 }
 
-function fileSummary(name) {
-  const f = files.find(item => item.name === name);
-  if (f) toast('AI 摘要已生成', `${f.name}：已提取文件分类、来源和索引状态；正式版将由知识检索 Agent 返回摘要。`);
+async function saveFileMetadata() {
+  const f=files.find(item=>item.id===state.formContext?.id);if(!f)return;
+  const payload={...f,name:formText('privateFileName'),category:formText('privateFileEditCategory'),tags:formText('privateFileEditTags').split(/[、,，/]/).map(value=>value.trim()).filter(Boolean),source:formText('privateFileSource')};
+  if(!payload.name||!payload.category){toast('保存失败','文件名和主分类不能为空。','warning');return;}
+  try {const record=await apiFetch(`/api/v1/private-files/${encodeURIComponent(f.id)}`,{method:'PATCH',body:JSON.stringify(payload)});upsertRecord(files,record);closeModal();closeDrawer();renderPage();toast('文件信息已更新',record.name);}
+  catch(error){toast('保存失败',error.message,'warning');}
+}
+
+async function archivePrivateFile(id) {
+  const f=files.find(item=>item.id===id);if(!f||!window.confirm(`确定删除本机文件“${f.name}”吗？此操作会同时删除保存的原始文件。`))return;
+  try {await apiFetch(`/api/v1/private-files/${encodeURIComponent(id)}`,{method:'DELETE'});removeRecord(files,id);closeModal();closeDrawer();renderPage();toast('文件已删除',f.name);}
+  catch(error){toast('删除失败',error.message,'warning');}
+}
+
+async function reindexPrivateFile(id) {
+  try {const result=await apiFetch(`/api/v1/private-files/${encodeURIComponent(id)}/reindex`,{method:'POST',body:'{}'});upsertRecord(files,result.item);closeModal();renderPage();toast('重新索引请求已记录',result.todo,'warning');}
+  catch(error){toast('重新索引失败',error.message,'warning');}
+}
+
+async function fileSummary(id) {
+  const f=files.find(item=>item.id===id);if(!f)return;
+  try {await apiFetch(`/api/v1/private-files/${encodeURIComponent(id)}/summary`);}
+  catch(error){toast('摘要暂不可用',error.message,'warning');}
 }
 
 function newsDetail(title) {
   const n=news.find(x=>x.title===title)||news[0];
   openDrawer({title:n.title,eyebrow:`${n.category} / ${n.source}`,body:`<div class="spread"><span class="badge green">相关度 ${n.relevance}</span><span class="secondary-text">${n.time}</span></div><p style="margin-top:20px;line-height:1.8;color:var(--text)">${n.summary}</p><div class="divider-title" style="margin:20px 0 12px">智能体摘要</div><p class="secondary-text" style="line-height:1.8">该信息与当前关注的欧洲渠道、智能骑行产品和合规主题相关。建议结合客户档案与产品库，检查受影响客户和产品后再形成行动项。</p><div class="divider-title" style="margin:20px 0 12px">来源信息</div><div class="detail-grid">${[['来源',n.source],['获取时间',n.time],['信息类别',n.category],['数据区域','互联网推荐数据']].map(([l,v])=>`<div class="detail-field"><label>${l}</label><strong>${v}</strong></div>`).join('')}</div><div class="inline-actions" style="margin-top:18px"><button class="button" data-action="news-source-link" data-title="${escapeAttr(n.title)}">${icon('external-link')}查看原文</button><button class="button primary" data-action="news-todo" data-title="${escapeAttr(n.title)}">${icon('list-plus')}生成待办</button></div>`});
+}
+
+async function refreshNews() {
+  try {await apiFetch('/api/v1/news/refresh',{method:'POST',body:'{}'});}
+  catch(error){toast('新闻暂不可更新',error.message,'warning');}
+}
+
+function openNewsSource(title) {
+  const item=news.find(entry=>entry.title===title);
+  if(item?.sourceUrl){window.open(item.sourceUrl,'_blank','noopener,noreferrer');return;}
+  toast('原文链接未配置','当前缓存记录没有来源 URL，待来源白名单和抓取规则确认后补充。','warning');
+}
+
+async function createNewsTodo(title) {
+  try {await apiFetch('/api/v1/tasks',{method:'POST',body:JSON.stringify({title:`跟进资讯：${title}`,source:'industry_news'})});}
+  catch(error){toast('待办暂不可生成',error.message,'warning');}
 }
 
 function configureModel() {
@@ -1526,8 +1884,7 @@ async function saveModelConfiguration(button) {
   button.innerHTML = `${icon('loader-circle')}保存中`;
   applyIcons();
   try {
-    if (apiKey) await apiFetch('/api/v1/openclaw/models/auth', { method: 'POST', body: JSON.stringify({ provider, apiKey }) });
-    if (model !== state.openClawModels?.resolvedDefault) await apiFetch('/api/v1/openclaw/models/default', { method: 'PUT', body: JSON.stringify({ model }) });
+    await apiFetch('/api/v1/settings/model', { method: 'PATCH', body: JSON.stringify({ provider, apiKey, model }) });
     await loadOpenClawModels(true);
     closeModal();
     toast('OpenClaw 模型配置已更新', `${model} 已设为默认模型。`);
@@ -1537,6 +1894,11 @@ async function saveModelConfiguration(button) {
     applyIcons();
     toast('模型配置更新失败', error.message, 'warning');
   }
+}
+
+async function testModelConnection() {
+  try {const result=await apiFetch('/api/v1/settings/model/test',{method:'POST',body:'{}'});toast(result.ok?'模型配置可用':'模型配置异常',`OpenClaw RPC 检查耗时 ${result.durationMs} ms · ${result.version||'版本未知'}`,result.ok?'success':'warning');}
+  catch(error){toast('模型连接检查失败',error.message,'warning');}
 }
 
 function renderAgentManagerBody() {
@@ -1576,8 +1938,42 @@ async function syncOpenClawAgents(button) {
   }
 }
 
-function schedulerForm(name='新增定时任务') {
-  openModal({title:name,eyebrow:'设置 / 定时任务',body:`<div class="form-grid">${inputField('任务名称',name==='新增定时任务'?'':name,true,true)}${selectField('任务类型',['每日推荐更新','智能体周报','行业新闻更新','数据索引维护','自定义任务'],true)}${selectField('执行频率',['每 60 分钟','每天','每周','自定义 Cron'])}${inputField('执行时间','08:00')}<div class="form-field full"><label>任务内容</label><textarea class="textarea">根据用户关注条件更新推荐信息，去重后保存最近 20 条。</textarea></div><div class="form-field full"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" checked> 启用任务</label></div></div>`,footer:formFooter('保存任务')});
+function openPluginForm(id) {
+  const plugin=boundPlugins.find(item=>item.id===id);if(!plugin)return;
+  state.formContext={type:'plugin',id};
+  openModal({title:`${plugin.name}插件`,eyebrow:'设置 / 插件绑定',body:`<div class="form-grid"><div class="form-field full"><label style="display:flex;align-items:center;gap:8px"><input id="pluginEnabled" type="checkbox" ${plugin.enabled?'checked':''}> 启用插件绑定流程</label></div><div class="form-field full"><div class="model-warning"><span>${icon('info')} 当前只保存启用状态。插件凭据、推送内容、接收对象和同步范围尚待客户确认，启用后状态为 PendingBinding，不会显示为已绑定成功。</span></div></div></div>`,footer:formFooter('保存状态','save-plugin')});
+}
+
+async function savePlugin() {
+  const plugin=boundPlugins.find(item=>item.id===state.formContext?.id);if(!plugin)return;
+  try {const result=await apiFetch('/api/v1/plugins',{method:'PATCH',body:JSON.stringify({...plugin,enabled:Boolean(document.getElementById('pluginEnabled')?.checked)})});upsertRecord(boundPlugins,result.item);closeModal();renderPage();toast('插件状态已保存',result.todo,'warning');}
+  catch(error){toast('插件状态保存失败',error.message,'warning');}
+}
+
+function schedulerForm(id='') {
+  const job=scheduledJobs.find(item=>item.id===id)||{};
+  state.formContext={type:'job',id:job.id||''};
+  openModal({title:job.id?'编辑定时任务':'新增定时任务',eyebrow:'设置 / 定时任务',body:`<div class="form-grid">${inputField('任务名称',job.name||'',true,true,'text','jobName')}${selectField('任务类型',['recommendations','weekly_report','news','index','custom'],true,'jobKind',job.kind||'custom')}${inputField('执行频率 / Cron',job.schedule||'每天 08:00',true,false,'text','jobSchedule')}<div class="form-field full"><label style="display:flex;align-items:center;gap:8px"><input id="jobEnabled" type="checkbox" ${job.id?!job.enabled?'':'checked':'checked'}> 启用任务</label></div>${job.id&&!job.builtIn?`<div class="form-field full"><button type="button" class="button danger" data-action="delete-schedule" data-id="${escapeAttr(job.id)}">${icon('trash-2')}删除自定义任务</button></div>`:''}</div>`,footer:formFooter('保存任务','save-schedule')});
+}
+
+async function saveSchedule() {
+  const existing=scheduledJobs.find(item=>item.id===state.formContext?.id);
+  const payload={...(existing||{}),name:formText('jobName'),kind:formText('jobKind'),schedule:formText('jobSchedule'),enabled:Boolean(document.getElementById('jobEnabled')?.checked),status:existing?.status||'Ready'};
+  if(!payload.name||!payload.kind||!payload.schedule){toast('保存失败','任务名称、类型和执行频率不能为空。','warning');return;}
+  try {const record=await apiFetch(existing?'/api/v1/jobs':'/api/v1/jobs',{method:existing?'PATCH':'POST',body:JSON.stringify(payload)});upsertRecord(scheduledJobs,record);closeModal();renderPage();toast(existing?'任务已更新':'任务已创建',record.name);}
+  catch(error){toast('任务保存失败',error.message,'warning');}
+}
+
+async function deleteSchedule(id) {
+  const job=scheduledJobs.find(item=>item.id===id);if(!job||!window.confirm(`确定删除任务“${job.name}”吗？`))return;
+  try {await apiFetch(`/api/v1/jobs/${encodeURIComponent(id)}`,{method:'DELETE'});removeRecord(scheduledJobs,id);closeModal();renderPage();toast('任务已删除',job.name);}
+  catch(error){toast('任务删除失败',error.message,'warning');}
+}
+
+async function generateWeeklyReport() {
+  openModal({title:'正在生成智能体周报',eyebrow:'全部智能体 / 最近 7 天',body:`<div class="empty-state">${icon('loader-circle')}<div><h3>正在汇总本机记录</h3><p>读取 Agent 会话和业务审计日志。</p></div></div>`});
+  try {const result=await apiFetch('/api/v1/agents/weekly-report',{method:'POST',body:'{}'});document.getElementById('modalBody').innerHTML=`<div class="model-warning"><span>${icon('info')} ${escapeHTML(result.todo||'')}</span></div><pre style="white-space:pre-wrap;line-height:1.7;margin-top:14px">${escapeHTML(result.markdown)}</pre>`;document.getElementById('modalFooter').innerHTML=`<button class="button" data-action="close-modal">关闭</button><button class="button primary" data-action="download-weekly-report">${icon('download')}下载 Markdown</button>`;state.lastWeeklyReport=result;applyIcons();}
+  catch(error){closeModal();toast('周报生成失败',error.message,'warning');}
 }
 
 function toast(title, message, type='success') {
@@ -1597,15 +1993,21 @@ function openCommand(query='') {
   setTimeout(()=>input.focus(),0);
 }
 function closeCommand(){document.getElementById('commandBackdrop').hidden=true;}
-function renderCommandResults(query='') {
-  const entries=[
-    ...customers.map(c=>({type:'客户',label:c.name,sub:`${c.id} · ${c.country}`,icon:'building-2',page:'customers'})),
-    ...orders.map(o=>({type:'订单',label:o.id,sub:`${o.customer} · ${o.value}`,icon:'package-check',page:'orders'})),
-    ...products.map(p=>({type:'产品',label:p.name,sub:`${p.id} · ${p.hs}`,icon:'boxes',page:'products'})),
-    ...files.map(f=>({type:'文件',label:f.name,sub:`${f.category} · ${f.source}`,icon:'file',page:'database'})),
-  ].filter(e=>!query||`${e.type} ${e.label} ${e.sub}`.toLowerCase().includes(query.toLowerCase())).slice(0,8);
-  document.getElementById('commandResults').innerHTML=`<div class="command-results">${entries.length?entries.map(e=>`<button class="command-result" data-command-page="${e.page}"><span class="result-icon">${icon(e.icon)}</span><div><strong>${e.label}</strong><small>${e.type} · ${e.sub}</small></div>${icon('arrow-right')}</button>`).join(''):`<div class="command-empty">未找到匹配结果</div>`}</div>`;
-  applyIcons();
+async function renderCommandResults(query='') {
+  const target=document.getElementById('commandResults');if(!target)return;
+  const trimmed=String(query||'').trim();
+  if(!trimmed){target.innerHTML=`<div class="command-empty">输入客户、订单、产品或文件关键字</div>`;return;}
+  const sequence=++state.commandSearchSeq;
+  target.innerHTML=`<div class="command-empty">正在搜索本地业务数据库...</div>`;
+  try {
+    const data=await apiFetch(`/api/v1/search?q=${encodeURIComponent(trimmed)}`);
+    if(sequence!==state.commandSearchSeq)return;
+    const iconFor={客户:'building-2',订单:'package-check',产品:'boxes',文件:'file'};
+    target.innerHTML=`<div class="command-results">${data.items.length?data.items.map(entry=>`<button class="command-result" data-command-page="${escapeAttr(entry.page)}"><span class="result-icon">${icon(iconFor[entry.type]||'search')}</span><div><strong>${escapeHTML(entry.label)}</strong><small>${escapeHTML(entry.type)} · ${escapeHTML(entry.sub)}</small></div>${icon('arrow-right')}</button>`).join(''):`<div class="command-empty">未找到匹配结果</div>`}</div>`;
+    applyIcons();
+  } catch(error) {
+    if(sequence===state.commandSearchSeq)target.innerHTML=`<div class="command-empty">${escapeHTML(error.message)}</div>`;
+  }
 }
 
 document.addEventListener('input', e => {
@@ -1655,86 +2057,84 @@ document.addEventListener('click', e => {
   const st=e.target.closest('[data-settings-tab]'); if(st){state.settingsTab=st.dataset.settingsTab;renderPage();loadPageOpenClawData();return;}
   const cmd=e.target.closest('[data-command-page]'); if(cmd){closeCommand();setPage(cmd.dataset.commandPage);return;}
   const el=e.target.closest('[data-action]');
-  if(!el){
-    const passive=e.target.closest('button');
-    if(passive && !passive.closest('.modal-header') && !passive.closest('.drawer-header')) toast('操作已触发','该按钮当前仅更新前端交互状态，正式接口接入后将执行完整业务操作。');
-    return;
-  }
+  if(!el)return;
   const action=el.dataset.action;
   const actions={
     'close-modal':closeModal,'close-drawer':closeDrawer,
     'open-sidebar':()=>document.getElementById('sidebar').classList.add('open'),
     'close-sidebar':()=>document.getElementById('sidebar').classList.remove('open'),
     'sort-table':()=>toggleTableSort(el.dataset.module,el.dataset.field),
-    'refresh':()=>toast('刷新完成','页面数据已更新；当前原型未调用后端接口。'),'pagination-current':()=>toast('当前已是第 1 页','正式版接入分页接口后可切换更多页面。'),
-    'notifications':()=>openDrawer({title:'通知',eyebrow:'最近 24 小时',body:`<div class="timeline"><div class="timeline-item"><h4>2 份文件需要人工复核</h4><p>数据库 · 10:02</p></div><div class="timeline-item"><h4>订单 SO-2026-0102 已发运</h4><p>订单 · 09:18</p></div><div class="timeline-item"><h4>模型连接测试成功</h4><p>设置 · 08:36</p></div></div>`}),
+    'refresh':()=>void refreshBusinessData(),'pagination-current':()=>toast('当前已是第 1 页','当前数据量只有一页。'),
+    'notifications':openNotifications,
+    'token-usage':openTokenUsage,
+    'refresh-token-usage':async()=>{await loadTokenUsage();openTokenUsage();},
+    'clear-token-usage':()=>void clearTokenUsage(),
     'lock':logoutUser,
     'metric-detail':()=>showMetric(el.dataset.key),
     'toggle-recommendations':()=>{state.recExpanded=!state.recExpanded;renderPage();},
     'recommend-detail':()=>newsDetail(recommendations[Number(el.dataset.index)].title),
     'recommend-settings':()=>{setPage('news');setTimeout(()=>document.querySelector('[data-action="news-sources"]')?.click(),0);},
     'oem-preset':()=>{state.oemQuery=el.dataset.value;const input=document.getElementById('oemQuery');if(input)input.value=state.oemQuery;renderPage();},
-    'oem-run':()=>{state.oemQuery=document.getElementById('oemQuery')?.value.trim()||'';state.oemCategory=document.getElementById('oemCategory')?.value||state.oemCategory;toast('OEM 匹配完成','已按当前骑行类目、排序和 Top 数量刷新候选工厂。');renderPage();},
-    'oem-detail':()=>oemDetail(el.dataset.name),
+    'oem-run':()=>void runOEMMatch(),
     'oem-export':oemExport,
-    'unified-customer-search':()=>{state.customerSearchQuery=document.getElementById('unifiedCustomerQuery')?.value.trim()||'';state.customerSearchMode=document.getElementById('unifiedSearchMode')?.value||state.customerSearchMode;state.customerHasContact=Boolean(document.getElementById('hasContactOnly')?.checked);toast('客户搜索完成',`${state.customerSearchMode==='local'?'本地知识库':state.customerSearchMode==='rag'?'联网检索':'本地知识库 + 联网检索'}结果已返回。`);renderPage();},
+    'unified-customer-search':()=>void runUnifiedCustomerSearch(),
     'unified-customer-detail':()=>unifiedCustomerDetail(el.dataset.name),
-    'local-discovery-search':()=>{state.discoveryCountry=document.getElementById('discoveryCountry')?.value||state.discoveryCountry;state.discoveryCity=document.getElementById('discoveryCity')?.value||state.discoveryCity;state.discoveryType=document.getElementById('discoveryType')?.value||state.discoveryType;toast('本地客户发现完成','已提交筛选条件，并展示 CustomerMeasurementAgent 返回的候选结果。');renderPage();},
+    'local-discovery-search':()=>void runLocalDiscovery(),
     'local-lead-detail':()=>localLeadDetail(el.dataset.name),
     'agent-chat':()=>showAgentChat(Number(el.dataset.agent),el.dataset.prompt||''),
-    'weekly-report':()=>openModal({title:'生成智能体周报',eyebrow:'全部智能体 / 本周',body:`<div class="form-grid">${inputField('统计周期','2026-08-03 至 2026-08-09',true,true)}${selectField('内容范围',['全部智能体','按分类选择'])}${selectField('输出语言',['中文','英文','中文 / 英文双语'])}${selectField('输出格式',['Markdown + PDF','Markdown'])}<div class="form-field full"><label>周报包括</label><div class="filter-row">${['使用概览','重要对话','完成事项','待跟进','引用来源'].map(v=>`<label class="filter-chip active"><input type="checkbox" checked>${v}</label>`).join('')}</div></div></div>`,footer:formFooter('生成周报')}),
+    'weekly-report':()=>void generateWeeklyReport(),
+    'download-weekly-report':()=>state.lastWeeklyReport&&downloadText(`STA100-Agent-Weekly-${new Date().toISOString().slice(0,10)}.md`,state.lastWeeklyReport.markdown),
     'agent-manage':openAgentManager,
     'sync-openclaw-agents':()=>syncOpenClawAgents(el),
-    'new-customer':()=>newCustomerForm(), 'edit-customer':()=>newCustomerForm(customers.find(c=>c.id===el.dataset.id)), 'customer-detail':()=>customerDetail(el.dataset.id), 'delete-customer':()=>deleteCustomer(el.dataset.id), 'customer-more':()=>customerDetail(el.dataset.id,'activity'),
-    'export-customers':()=>toast('导出任务已创建','客户列表将按当前筛选条件导出为 Excel。'),
-    'column-settings':()=>openModal({title:'客户列表字段',eyebrow:'显示设置',body:`<div class="filter-row">${['客户编号','客户类型','国家','联系人','电话','订单数','累计金额','评级','更新时间'].map(v=>`<label class="filter-chip active"><input type="checkbox" checked>${v}</label>`).join('')}</div>`,footer:formFooter('应用')}),
-    'new-quote':()=>newQuoteForm(null,el.dataset.customer||''),'quote-detail':()=>quoteDetail(el.dataset.id),'edit-quote':()=>newQuoteForm(quotes.find(q=>q.id===el.dataset.id)),'delete-quote':()=>deleteQuote(el.dataset.id),'download-quote':()=>downloadQuote(el.dataset.id),'convert-order':()=>{closeDrawer();newOrderForm(null,quotes.find(q=>q.id===el.dataset.id)?.id||'');},
+    'new-customer':()=>newCustomerForm(), 'edit-customer':()=>newCustomerForm(customers.find(c=>c.id===el.dataset.id)), 'customer-detail':()=>void customerDetail(el.dataset.id), 'delete-customer':()=>deleteCustomer(el.dataset.id), 'customer-more':()=>void customerDetail(el.dataset.id,'activity'),
+    'customer-communications':()=>{closeModal();void customerDetail(el.dataset.id,'activity');},'new-customer-communication':()=>customerCommunicationForm(el.dataset.id),'save-customer-communication':()=>void saveCustomerCommunication(el.dataset.id),'cancel-customer-communication':()=>{closeModal();void customerDetail(el.dataset.id,'activity');},
+    'export-customers':()=>window.location.assign('/api/v1/accounts/export'),
+    'column-settings':openCustomerColumnSettings,'save-customer-columns':saveCustomerColumns,
+    'new-quote':()=>newQuoteForm(null,el.dataset.customer||''),'quote-detail':()=>quoteDetail(el.dataset.id),'edit-quote':()=>newQuoteForm(quotes.find(q=>q.id===el.dataset.id)),'delete-quote':()=>void deleteQuote(el.dataset.id),'download-quote':()=>void downloadQuote(el.dataset.id),'convert-order':()=>void convertQuoteToOrder(el.dataset.id),
     'quote-metric-filter':()=>{state.quoteStatus=el.dataset.status||'all';renderPage();},
     'new-order':()=>newOrderForm(),'edit-order':()=>newOrderForm(orders.find(o=>o.id===el.dataset.id)),'delete-order':()=>deleteOrder(el.dataset.id),'order-detail':()=>orderDetail(el.dataset.id),
-    'generate-docs':()=>generateDocs(el.dataset.id),'new-document':()=>generateDocs(''),'edit-document':()=>generateDocs('',documents.find(d=>d.id===el.dataset.id)),'delete-document':()=>deleteDocument(el.dataset.id),'download-document':()=>downloadDocument(el.dataset.id),'template-center':()=>templateCenter(el.dataset.kind),'document-detail':()=>documentDetail(el.dataset.id),
+    'generate-docs':()=>generateDocs(el.dataset.id),'new-document':()=>generateDocs(''),'edit-document':()=>generateDocs('',documents.find(d=>d.id===el.dataset.id)),'delete-document':()=>deleteDocument(el.dataset.id),'download-document':()=>void downloadDocument(el.dataset.id),'template-center':()=>templateCenter(el.dataset.kind),'document-detail':()=>documentDetail(el.dataset.id),
     'clear-document-filters':()=>{state.documentSearch='';state.documentType='all';state.documentStatus='all';renderPage();},
     'upload-template-image':()=>document.getElementById('templateImageInput')?.click(),
     'upload-template-file':()=>document.getElementById('templateFileInput')?.click(),
-    'new-product':()=>newProductForm(),'edit-product':()=>newProductForm(products.find(p=>p.id===el.dataset.id)),'product-detail':()=>productDetail(el.dataset.id),'delete-product':()=>deleteProduct(el.dataset.id),'save-product':saveProduct,'import-products':()=>uploadFileModal(),'toggle-product-sort':()=>{state.productSort=state.productSort==='stockAsc'?'stockDesc':'stockAsc';renderPage();},
-    'new-supplier':()=>newSupplierForm(),'edit-supplier':()=>newSupplierForm(suppliers.find(s=>s.id===el.dataset.id)),'supplier-detail':()=>supplierDetail(el.dataset.id),'delete-supplier':()=>deleteSupplier(el.dataset.id),'export-suppliers':()=>downloadText('suppliers.csv',['公司,电话,联系人,邮件,产品,规格,报价,来源,备注',...suppliers.map(s=>[s.company,s.phone,s.contact,s.email,s.product,s.specification,s.quote,s.source,s.notes].map(v=>`"${String(v).replaceAll('"','""')}"`).join(','))].join('\n')),
-    'upload-file':uploadFileModal,'choose-file':()=>toast('已选择示例文件','文件校验通过，等待开始处理。'),'file-preview':()=>filePreview(el.dataset.name),'file-download':()=>fileDownload(el.dataset.name),'file-edit':()=>fileEdit(el.dataset.name),'file-summary':()=>fileSummary(el.dataset.name),'file-more':()=>openModal({title:'文件更多操作',eyebrow:'数据库 / 文件操作',body:`<div class="filter-row"><button class="button" data-action="file-summary" data-name="${escapeAttr(el.dataset.name)}">${icon('sparkles')}生成摘要</button><button class="button" data-action="file-download" data-name="${escapeAttr(el.dataset.name)}">${icon('download')}下载文件</button><button class="button danger" data-action="file-archive" data-name="${escapeAttr(el.dataset.name)}">${icon('archive')}归档文件</button></div>`,footer:`<button class="button" data-action="close-modal">关闭</button>`}),'file-archive':()=>toast('归档操作已记录',`${el.dataset.name} 将进入归档队列，正式版由 Go 文件接口处理。`),
-    'open-category':()=>openModal({title:el.dataset.category,eyebrow:'数据库 / 分类',body:`<div class="empty-state">${icon('folder-search')}<div><h3>${el.dataset.category}文件</h3><p>正式接口接入后显示该主分类及关联标签下的文件列表。</p><button class="button primary" data-action="upload-file">${icon('upload')}上传到此分类</button></div></div>`,footer:`<button class="button" data-action="close-modal">关闭</button>`}),
-    'agent-backup':()=>toast('智能体数据备份已开始','将备份初始化配置、技能、会话和操作记录。'),
-    'tag-manage':()=>openModal({title:'标签管理',eyebrow:'数据库',body:`<div class="filter-row">${['客户私有','通用资料','合同','报价单','产品','欧盟','E-bike','兼容'].map(v=>`<span class="filter-chip active">${v}</span>`).join('')}</div>`,footer:formFooter('保存标签')}),
+    'new-product':()=>newProductForm(),'edit-product':()=>newProductForm(products.find(p=>p.id===el.dataset.id)),'product-detail':()=>productDetail(el.dataset.id),'delete-product':()=>deleteProduct(el.dataset.id),'save-product':saveProduct,'import-products':productImportModal,'choose-product-import':()=>document.getElementById('productImportInput')?.click(),'toggle-product-sort':()=>{state.productSort=state.productSort==='stockAsc'?'stockDesc':'stockAsc';renderPage();},
+    'new-supplier':()=>newSupplierForm(),'edit-supplier':()=>newSupplierForm(suppliers.find(s=>s.id===el.dataset.id)),'supplier-detail':()=>supplierDetail(el.dataset.id),'delete-supplier':()=>deleteSupplier(el.dataset.id),'export-suppliers':()=>window.location.assign('/api/v1/suppliers/export'),
+    'upload-file':uploadFileModal,'choose-file':()=>document.getElementById('privateFileInput')?.click(),'upload-private-file':()=>void uploadPrivateFile(),'save-file-metadata':()=>void saveFileMetadata(),'file-preview':()=>filePreview(el.dataset.id),'file-download':()=>fileDownload(el.dataset.id),'file-edit':()=>fileEdit(el.dataset.id),'file-summary':()=>void fileSummary(el.dataset.id),'file-more':()=>openModal({title:'文件更多操作',eyebrow:'数据库 / 文件操作',body:`<div class="filter-row"><button class="button" data-action="file-summary" data-id="${escapeAttr(el.dataset.id)}">${icon('sparkles')}摘要状态</button><button class="button" data-action="file-download" data-id="${escapeAttr(el.dataset.id)}">${icon('download')}下载文件</button><button class="button" data-action="file-reindex" data-id="${escapeAttr(el.dataset.id)}">${icon('refresh-cw')}重新索引</button><button class="button danger" data-action="file-archive" data-id="${escapeAttr(el.dataset.id)}">${icon('trash-2')}删除文件</button></div>`,footer:`<button class="button" data-action="close-modal">关闭</button>`}),'file-archive':()=>void archivePrivateFile(el.dataset.id),'file-reindex':()=>void reindexPrivateFile(el.dataset.id),
+    'open-category':()=>{state.fileSearch=el.dataset.category;renderPage();},
+    'agent-backup':()=>void backupAgents(),
+    'tag-manage':()=>openModal({title:'当前文件标签',eyebrow:'数据库',body:`<div class="filter-row">${[...new Set(files.flatMap(file=>file.tags||[]))].map(v=>`<span class="filter-chip active">${escapeHTML(v)}</span>`).join('')||'<span class="secondary-text">暂无标签</span>'}</div><p class="secondary-text" style="margin-top:14px">标签通过每个文件的“编辑信息”维护，修改后立即保存到本机数据库。</p>`,footer:`<button class="button" data-action="close-modal">关闭</button>`}),
     'news-detail':()=>newsDetail(el.dataset.title),'toggle-news':()=>{state.newsExpanded=!state.newsExpanded;renderPage();},'news-filter':()=>{state.newsCategory=el.dataset.category||'全部';state.newsExpanded=false;renderPage();},
-    'news-source-link':()=>toast('原文链接待配置','正式版将打开已通过来源白名单校验的原文地址。'),'news-todo':()=>toast('待办已生成','已将该行业资讯加入今日日程，正式版将写入任务和提醒接口。'),
-    'refresh-news':()=>toast('新闻更新任务已启动','推荐智能体将按来源白名单获取和去重。'),
+    'news-source-link':()=>openNewsSource(el.dataset.title),'news-todo':()=>void createNewsTodo(el.dataset.title),
+    'refresh-news':()=>void refreshNews(),
     'news-sources':openNewsSettings,
-    'save-news-settings':saveNewsSettings,
+    'save-news-settings':()=>void saveNewsSettings(),
     'configure-model':configureModel,
     'account-settings':openAccountSettings,
     'save-model-config':()=>saveModelConfiguration(el),
     'save-account-settings':()=>void saveAccountSettings(),
     'toggle-api-key-input':()=>{const input=document.getElementById('modelAPIKey');if(input){input.type=input.type==='password'?'text':'password';el.innerHTML=icon(input.type==='password'?'eye':'eye-off');applyIcons();}},
-    'test-model':async()=>{await loadOpenClawModels(true);toast(state.modelConfigured?'模型配置可用':'模型配置待处理',state.modelConfigured?'OpenClaw 已解析默认模型和对应凭据。':'请检查默认模型和提供商凭据。',state.modelConfigured?'success':'warning');},
+    'test-model':()=>void testModelConnection(),
     'refresh-openclaw-models':async()=>{await loadOpenClawModels(true);toast('模型信息已刷新',state.openClawModels?.error||`当前默认模型：${state.openClawModels?.resolvedDefault||'未配置'}`,state.openClawModels?.error?'warning':'success');},
-    'refresh-openclaw-system':async()=>{await Promise.all([loadOpenClawStatus(true),loadOpenClawAgents(true)]);toast('系统状态已刷新',state.openClawStatus?.rpcOK?'OpenClaw 网关与 RPC 正常。':'OpenClaw 状态需要检查。',state.openClawStatus?.rpcOK?'success':'warning');},
-    'bind-plugin':()=>toast(`${el.dataset.plugin}插件`,el.textContent.trim()==='绑定'?'已进入 OpenClaw 绑定流程。':'已打开插件管理。'),
-    'new-schedule':()=>schedulerForm(),'edit-schedule':()=>schedulerForm(el.dataset.name),'choose-backup':()=>toast('备份目录已更新','已选择本机外置存储目录。'),
-    'offline-upgrade':offlineUpgradeModal,'choose-upgrade-package':()=>document.getElementById('upgradeFileInput')?.click(),'offline-install':installOfflineUpgrade,
-    'upgrade-history':()=>openModal({title:'升级记录',eyebrow:'版本升级 / 审计日志',body:`<div class="empty-state">${icon('history')}<div><h3>暂无升级记录</h3><p>正式版记录升级包版本、签名摘要、操作人、快照、结果和回滚信息。</p></div></div>`,footer:`<button class="button" data-action="close-modal">关闭</button>`}),
+    'refresh-openclaw-system':async()=>{await Promise.all([loadOpenClawStatus(true),loadOpenClawAgents(true),loadSystemHealth(true)]);toast('系统状态已刷新',state.systemHealth?.status==='ok'?'Go 服务、SQLite 与 OpenClaw 状态正常。':'部分组件需要检查。',state.systemHealth?.status==='ok'?'success':'warning');},
+    'bind-plugin':()=>openPluginForm(el.dataset.id),'save-plugin':()=>void savePlugin(),
+    'new-schedule':()=>schedulerForm(),'edit-schedule':()=>schedulerForm(el.dataset.id),'save-schedule':()=>void saveSchedule(),'delete-schedule':()=>void deleteSchedule(el.dataset.id),'choose-backup':()=>toast('备份目录待部署确认','浏览器不能直接授权后端写入任意外置路径；需确定盒子挂载点和目录白名单。','warning'),
+    'offline-upgrade':offlineUpgradeModal,'choose-upgrade-package':()=>document.getElementById('upgradeFileInput')?.click(),'import-upgrade-package':()=>void importOfflineUpgrade(),
+    'upgrade-history':()=>void showUpgradeHistory(),
     'relation-select':()=>{const input=document.getElementById(el.dataset.target);if(input){input.value=el.dataset.value;const options=document.getElementById(`${el.dataset.target}Options`);if(options)options.innerHTML='';if(el.dataset.target==='orderQuote')syncOrderFromQuote(el.dataset.value);}},
-    'save-customer':saveCustomer,'save-quote':saveQuote,'save-order':saveOrder,'save-document':saveDocument,'save-supplier':saveSupplier,
+    'save-customer':()=>void saveCustomer(),'save-quote':()=>void saveQuote(),'save-order':()=>void saveOrder(),'save-document':()=>void saveDocument(),'save-supplier':()=>void saveSupplier(),
     'add-quote-line':()=>{const product=products.find(item=>item.status==='Active')||products[0];state.quoteDraftLines.push({productId:product.id,quantity:1,unitPrice:moneyNumber(product.price),discount:0});renderQuoteDraftLines();},
     'remove-quote-line':()=>{if(state.quoteDraftLines.length===1){toast('至少保留一条产品明细','正式报价单需要至少一个产品。','warning');return;}state.quoteDraftLines.splice(Number(el.dataset.index),1);renderQuoteDraftLines();},
     'add-order-line':()=>{const product=products.find(item=>item.status==='Active')||products[0];state.orderDraftLines.push({productId:product.id,quantity:1,unitPrice:moneyNumber(product.price)});renderOrderDraftLines();},
     'remove-order-line':()=>{if(state.orderDraftLines.length===1){toast('至少保留一条产品明细','订单需要至少一个产品。','warning');return;}state.orderDraftLines.splice(Number(el.dataset.index),1);renderOrderDraftLines();},
-    'download-quote':()=>downloadQuote(el.dataset.id),'download-document':()=>downloadDocument(el.dataset.id),
     'toggle-api-key':()=>{state.showApiKey=!state.showApiKey;configureModel();},
-    'template-default':()=>templateAction('default'),'template-edit':()=>templateAction('edit'),
-    'quote-date-filter':()=>toast('有效期筛选','可在后端接入后按日期区间筛选当前报价单。'),'order-date-filter':()=>toast('交付日期筛选','可在后端接入后按日期区间筛选当前订单。'),
-    'save-form':()=>{closeModal();toast('已保存','当前表单内容已记录；正式版将调用对应 Go REST API。');renderPage();},
+    'template-default':()=>void templateAction('default'),'template-edit':()=>void templateAction('edit'),
+    'quote-date-filter':()=>dateFilterForm('quote'),'order-date-filter':()=>dateFilterForm('order'),'apply-date-filter':()=>applyDateFilter(el.dataset.module,el.dataset.clear==='true'),
     'send-chat':()=>void sendAgentMessage(Number(el.dataset.agent)),
     'retry-chat':()=>void sendAgentMessage(Number(el.dataset.agent),el.dataset.message||''),
     'chat-quick-prompt':()=>void sendAgentMessage(Number(el.dataset.agent),el.dataset.prompt||''),
     'agent-allowlist':()=>openAgentAllowlist(Number(el.dataset.agent)),
-    'save-agent-allowlist':()=>saveAgentAllowlist(Number(el.dataset.agent)),
-    'mock-ocr':()=>toast('图片识别完成','已识别公司名、联系人、电话和邮箱，请人工确认。'),
+    'save-agent-allowlist':()=>void saveAgentAllowlist(Number(el.dataset.agent)),
+    'mock-ocr':customerOCRModal,'choose-customer-ocr':()=>document.getElementById('customerOCRInput')?.click(),
   };
   if(actions[action])actions[action]();
 });

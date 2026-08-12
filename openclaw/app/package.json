@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "openclaw": "file:../downloads/openclaw-2026.7.1-2.tgz"
+    "openclaw": "2026.7.1-2"
   }
 }

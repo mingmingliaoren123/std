@@ -42,6 +42,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize STA-100 authentication: %v", err)
 	}
+	store, err := newBusinessStore()
+	if err != nil {
+		log.Fatalf("initialize STA-100 business database: %v", err)
+	}
+	defer store.Close()
+	business := newBusinessAPI(store, openClaw)
 	files := http.FileServer(http.FS(ui))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)
@@ -59,11 +65,13 @@ func main() {
 	protectedAPI.HandleFunc("/api/v1/openclaw/agents/sync", openClaw.syncAgentsHandler)
 	protectedAPI.HandleFunc("/api/v1/agents/chat", openClaw.chatHandler)
 	protectedAPI.HandleFunc("/api/v1/auth/account", auth.accountHandler)
+	protectedAPI.Handle("/api/v1/", business)
 	mux.Handle("/api/v1/", auth.requireSession(protectedAPI))
 	mux.Handle("/", files)
 
 	log.Printf("STA-100 web service listening on %s", *addr)
 	log.Printf("OpenClaw CLI: %s", valueOrUnavailable(openClaw.service.BinaryPath()))
+	log.Printf("STA-100 database: %s", store.path)
 	log.Fatal(http.ListenAndServe(*addr, requestLog(securityHeaders(mux))))
 }
 
@@ -187,6 +195,7 @@ func (s *openClawService) agentsHandler(w http.ResponseWriter, r *http.Request) 
 		writeOpenClawError(w, err)
 		return
 	}
+	agents = businessVisibleAgents(agents)
 	writeJSON(w, http.StatusOK, map[string]any{"count": len(agents), "agents": agents})
 }
 
@@ -201,7 +210,19 @@ func (s *openClawService) syncAgentsHandler(w http.ResponseWriter, r *http.Reque
 		writeOpenClawError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"synced": true, "count": len(agents), "agents": agents})
+	visible := businessVisibleAgents(agents)
+	writeJSON(w, http.StatusOK, map[string]any{"synced": true, "count": len(visible), "agents": visible, "systemAgents": len(agents) - len(visible)})
+}
+
+func businessVisibleAgents(agents []orchestrator.Agent) []orchestrator.Agent {
+	visible := make([]orchestrator.Agent, 0, len(agents))
+	for _, agent := range agents {
+		if agent.IsDefault || agent.Visibility == "system" {
+			continue
+		}
+		visible = append(visible, agent)
+	}
+	return visible
 }
 
 func (s *openClawService) chatHandler(w http.ResponseWriter, r *http.Request) {

@@ -2,17 +2,42 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NODE="$ROOT/runtime/bin/node"
 ENTRY="$ROOT/app/node_modules/openclaw/openclaw.mjs"
 
-if [[ ! -x "$NODE" ]]; then
-  echo "OpenClaw runtime missing: $NODE" >&2
+if [[ -n "${OPENCLAW_NODE:-}" ]]; then
+  NODE="$OPENCLAW_NODE"
+elif [[ -x /usr/bin/node ]]; then
+  NODE=/usr/bin/node
+else
+  NODE="$(command -v node || true)"
+fi
+
+if [[ -z "$NODE" ]]; then
+  echo "Node.js is not available in the current box environment." >&2
   exit 1
 fi
+
+if [[ ! -x "$NODE" ]]; then
+  echo "Node.js is not executable: $NODE" >&2
+  exit 1
+fi
+
+if ! "$NODE" -e '
+  const [major, minor, patch] = process.versions.node.split(".").map(Number);
+  const compatible =
+    (major === 22 && (minor > 22 || (minor === 22 && patch >= 3))) ||
+    (major === 24 && minor >= 15) ||
+    (major >= 25 && (major > 25 || minor >= 9));
+  process.exit(compatible ? 0 : 1);
+'; then
+  echo "OpenClaw requires Node.js >=22.22.3 <23, >=24.15.0 <25, or >=25.9.0; found $($NODE --version)" >&2
+  exit 1
+fi
+
 if [[ ! -f "$ENTRY" ]]; then
   echo "OpenClaw application missing: $ENTRY" >&2
   exit 1
 fi
 
-export PATH="$ROOT/runtime/bin:$PATH"
+export PATH="$(dirname "$NODE"):$PATH"
 exec "$NODE" "$ENTRY" "$@"

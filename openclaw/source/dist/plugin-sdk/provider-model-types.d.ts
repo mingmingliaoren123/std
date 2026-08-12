@@ -1,2 +1,0 @@
-import { a as ModelApi, f as ModelProviderConfig, o as ModelCompatConfig, s as ModelDefinitionConfig, t as BedrockDiscoveryConfig } from "../types.models-BvJnk7Su.js";
-export type { BedrockDiscoveryConfig, ModelApi, ModelCompatConfig, ModelDefinitionConfig, ModelProviderConfig };
