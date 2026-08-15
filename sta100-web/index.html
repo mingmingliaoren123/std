@@ -46,10 +46,12 @@
       <header class="topbar">
         <button class="icon-button menu-button" id="menuButton" data-action="open-sidebar" aria-label="打开导航" title="打开导航"><i data-lucide="menu"></i></button>
         <div class="page-heading">
-          <span class="eyebrow" id="pageEyebrow">STA-100 / 工作台</span>
-          <h1 id="pageTitle">📊 概览</h1>
+          <div class="page-brand">
+            <img class="topbar-brand-logo" src="assets/red_logo.png" alt="STRATRONIX">
+            <span class="eyebrow sr-only" id="pageEyebrow">STA-100 / 工作台</span>
+          </div>
+          <h1 class="sr-only" id="pageTitle">📊 概览</h1>
         </div>
-        <img class="topbar-brand-logo" src="assets/red_logo.png" alt="STRATRONIX">
         <div class="topbar-actions">
           <label class="global-search">
             <i data-lucide="search"></i>
@@ -73,9 +75,9 @@
         </div>
       </header>
 
-      <div class="ai-disclaimer" role="note"><i data-lucide="triangle-alert"></i><span>内容有AI生成，请仔细甄别</span></div>
-
       <main id="pageRoot" tabindex="-1"></main>
+
+      <div class="ai-disclaimer" role="note"><i data-lucide="triangle-alert"></i><span>内容由AI生成，请仔细甄别</span></div>
     </div>
   </div>
 

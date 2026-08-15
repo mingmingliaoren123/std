@@ -69,10 +69,10 @@ func (s *businessStore) seed(ctx context.Context) error {
 		{ID: "REC-0003", Title: "德国通勤 E-bike 价格带出现结构性变化", Desc: "中端价格段热度上升，适合评估产品组合和报价策略。", Source: "Bike Europe", Type: "市场趋势", Time: "1 小时前"},
 	}
 	jobs := []Job{
-		{ID: "JOB-RECOMMEND", Name: "每日推荐更新", Kind: "recommendations", Schedule: "每 60 分钟", Enabled: true, BuiltIn: true, Status: "Ready", UpdatedAt: "2026-08-10 08:00"},
-		{ID: "JOB-WEEKLY", Name: "智能体周报", Kind: "weekly_report", Schedule: "每周", Enabled: true, BuiltIn: true, Status: "Ready", UpdatedAt: "2026-08-10 08:00"},
-		{ID: "JOB-NEWS", Name: "行业新闻更新", Kind: "news", Schedule: "每 60 分钟", Enabled: true, BuiltIn: true, Status: "WaitingSource", UpdatedAt: "2026-08-10 08:00"},
-		{ID: "JOB-INDEX", Name: "数据索引维护", Kind: "index", Schedule: "每天", Enabled: true, BuiltIn: true, Status: "WaitingData", UpdatedAt: "2026-08-10 08:00"},
+		{ID: "JOB-RECOMMEND", Name: "每日推荐更新", Kind: "recommendations", Description: "定时汇总本地推荐缓存，后续接入客户确认的数据源。", AgentID: "sta100-coordinator", Prompt: "根据当前关注国家、主题和本地业务数据生成推荐摘要。", Schedule: "每 60 分钟", Enabled: true, BuiltIn: true, Status: "WaitingSource", UpdatedAt: "2026-08-10 08:00"},
+		{ID: "JOB-WEEKLY", Name: "智能体周报", Kind: "weekly_report", Description: "读取本机 Agent 会话、Token 使用和业务审计日志，生成周报草稿。", AgentID: "sta100-coordinator", Prompt: "汇总最近 7 天 STA-100 智能体使用情况、关键业务操作和待跟进事项。", Schedule: "每周", Enabled: true, BuiltIn: true, Status: "Ready", UpdatedAt: "2026-08-10 08:00"},
+		{ID: "JOB-NEWS", Name: "行业新闻更新", Kind: "news", Description: "按客户确认的新闻来源和频率抓取行业新闻，当前来源规则待确认。", AgentID: "market-analyzer", Prompt: "围绕骑行行业、欧洲渠道、法规和产品趋势整理新闻候选。", Schedule: "每 60 分钟", Enabled: true, BuiltIn: true, Status: "WaitingSource", UpdatedAt: "2026-08-10 08:00"},
+		{ID: "JOB-INDEX", Name: "数据索引维护", Kind: "index", Description: "扫描本机私有文件元数据，正式正文解析和向量索引等待原始数据格式。", AgentID: "sta100-knowledge", Prompt: "检查本地私有文件是否需要解析、分类、去重和索引。", Schedule: "每天", Enabled: true, BuiltIn: true, Status: "WaitingData", UpdatedAt: "2026-08-10 08:00"},
 	}
 	plugins := []Plugin{
 		{ID: "wechat", Name: "微信", Enabled: false, Status: "Unbound", Capabilities: []string{}, UpdatedAt: "2026-08-10 08:00"},
@@ -99,6 +99,7 @@ func (s *businessStore) seed(ctx context.Context) error {
 		NewsTopics:            "E-bike、智能骑行、经销商、欧盟法规",
 		NewsSources:           "EUR-Lex\nBike Europe\nCycling Industry News\nEurobike",
 		AgentAllowlists:       map[string][]string{},
+		AgentModelOverrides:   map[string]string{},
 	}
 	return s.putSetting(ctx, "preferences", preferences)
 }

@@ -163,17 +163,21 @@ type Recommendation struct {
 }
 
 type Job struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Schedule  string `json:"schedule"`
-	Enabled   bool   `json:"enabled"`
-	BuiltIn   bool   `json:"builtIn"`
-	LastRun   string `json:"lastRun,omitempty"`
-	NextRun   string `json:"nextRun,omitempty"`
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
-	UpdatedAt string `json:"updatedAt"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Description string `json:"description,omitempty"`
+	AgentID     string `json:"agentId,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+	Schedule    string `json:"schedule"`
+	Enabled     bool   `json:"enabled"`
+	BuiltIn     bool   `json:"builtIn"`
+	LastRun     string `json:"lastRun,omitempty"`
+	NextRun     string `json:"nextRun,omitempty"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+	LastResult  string `json:"lastResult,omitempty"`
+	UpdatedAt   string `json:"updatedAt"`
 }
 
 type Plugin struct {
@@ -193,4 +197,5 @@ type UserPreferences struct {
 	NewsTopics            string              `json:"newsTopics"`
 	NewsSources           string              `json:"newsSources"`
 	AgentAllowlists       map[string][]string `json:"agentAllowlists"`
+	AgentModelOverrides   map[string]string   `json:"agentModelOverrides"`
 }

@@ -61,6 +61,10 @@ func main() {
 	protectedAPI.HandleFunc("/api/v1/openclaw/models", openClaw.modelsHandler)
 	protectedAPI.HandleFunc("/api/v1/openclaw/models/default", openClaw.defaultModelHandler)
 	protectedAPI.HandleFunc("/api/v1/openclaw/models/auth", openClaw.modelAuthHandler)
+	protectedAPI.HandleFunc("/api/v1/openclaw/plugins", openClaw.pluginsHandler)
+	protectedAPI.HandleFunc("/api/v1/openclaw/plugins/", openClaw.pluginHandler)
+	protectedAPI.HandleFunc("/api/v1/openclaw/channels", openClaw.channelsHandler)
+	protectedAPI.HandleFunc("/api/v1/openclaw/channels/", openClaw.channelHandler)
 	protectedAPI.HandleFunc("/api/v1/openclaw/agents", openClaw.agentsHandler)
 	protectedAPI.HandleFunc("/api/v1/openclaw/agents/sync", openClaw.syncAgentsHandler)
 	protectedAPI.HandleFunc("/api/v1/agents/chat", openClaw.chatHandler)
@@ -150,9 +154,7 @@ func (s *openClawService) defaultModelHandler(w http.ResponseWriter, r *http.Req
 	if err := decodeJSONBody(w, r, &request); err != nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-	defer cancel()
-	if err := s.service.SetDefaultModel(ctx, request.Model); err != nil {
+	if err := s.service.SetConfiguredDefaultModel(request.Model); err != nil {
 		writeOpenClawError(w, err)
 		return
 	}
@@ -182,6 +184,143 @@ func (s *openClawService) modelAuthHandler(w http.ResponseWriter, r *http.Reques
 		"provider": strings.ToLower(strings.TrimSpace(request.Provider)),
 		"profile":  profile,
 	})
+}
+
+func (s *openClawService) pluginsHandler(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	plugins, err := s.service.Plugins(r.Context())
+	if err != nil {
+		writeOpenClawError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"catalogVersion": orchestrator.PluginCatalogVersion, "count": len(plugins), "plugins": plugins})
+}
+
+func (s *openClawService) pluginHandler(w http.ResponseWriter, r *http.Request) {
+	if !allowMutation(w, r, http.MethodPost) {
+		return
+	}
+	pluginID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/openclaw/plugins/"), "/")
+	var request struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeJSONBody(w, r, &request); err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := s.service.SetPluginEnabled(ctx, pluginID, request.Enabled); err != nil {
+		writeOpenClawError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": true, "id": pluginID, "enabled": request.Enabled})
+}
+
+func (s *openClawService) channelsHandler(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	channels, err := s.service.Channels(r.Context())
+	if err != nil {
+		writeOpenClawError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"catalogVersion": orchestrator.ChannelCatalogVersion, "count": len(channels), "channels": channels})
+}
+
+func (s *openClawService) channelHandler(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/openclaw/channels/"), "/"), "/")
+	if len(parts) == 3 && parts[1] == "qr" && parts[2] == "start" {
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		var request struct {
+			Account string `json:"account"`
+			Domain  string `json:"domain"`
+		}
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		result, err := s.service.StartFeishuQR(ctx, parts[0], request.Account, request.Domain)
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if len(parts) == 4 && parts[1] == "qr" && parts[3] == "status" {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		result, err := s.service.PollFeishuQR(ctx, parts[0], parts[2])
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "status" {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		status, err := s.service.ChannelStatus(ctx, parts[0])
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "login" {
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		var request struct {
+			Account string `json:"account"`
+		}
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		result, err := s.service.LoginChannel(ctx, parts[0], request.Account)
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if len(parts) != 1 || parts[0] == "" {
+		writeAPIError(w, http.StatusNotFound, "CHANNEL_ENDPOINT_NOT_FOUND", "通道接口不存在")
+		return
+	}
+	if !allowMutation(w, r, http.MethodPost) {
+		return
+	}
+	var request orchestrator.ChannelAccountRequest
+	if err := decodeJSONBody(w, r, &request); err != nil {
+		return
+	}
+	request.Channel = parts[0]
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	result, err := s.service.AddChannelAccount(ctx, request)
+	if err != nil {
+		writeOpenClawError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *openClawService) agentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -230,11 +369,13 @@ func (s *openClawService) chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		AgentID    string   `json:"agentId"`
-		Message    string   `json:"message"`
-		SessionKey string   `json:"sessionKey"`
-		Sources    []string `json:"sources"`
-		Allowlist  []string `json:"allowlist"`
+		AgentID     string                           `json:"agentId"`
+		Model       string                           `json:"model"`
+		Message     string                           `json:"message"`
+		SessionKey  string                           `json:"sessionKey"`
+		Sources     []string                         `json:"sources"`
+		Allowlist   []string                         `json:"allowlist"`
+		Attachments []orchestrator.MessageAttachment `json:"attachments"`
 	}
 	if err := decodeJSONBody(w, r, &request); err != nil {
 		return
@@ -242,8 +383,8 @@ func (s *openClawService) chatHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 105*time.Second)
 	defer cancel()
 	result, err := s.service.SendAgentMessage(ctx, orchestrator.AgentMessageInput{
-		AgentID: request.AgentID, Message: request.Message, SessionKey: request.SessionKey,
-		Sources: request.Sources, Allowlist: request.Allowlist,
+		AgentID: request.AgentID, Model: request.Model, Message: request.Message, SessionKey: request.SessionKey,
+		Sources: request.Sources, Allowlist: request.Allowlist, Attachments: request.Attachments,
 	})
 	if err != nil {
 		writeOpenClawError(w, err)
@@ -260,7 +401,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, destination any) err
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "INVALID_JSON", "请求数据格式无效")
+		writeAPIError(w, http.StatusBadRequest, "INVALID_JSON", "请求数据格式无效："+err.Error())
 		return err
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {

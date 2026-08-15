@@ -52,11 +52,32 @@ const state = {
   openClawStatusLoading: false,
   openClawModels: null,
   openClawModelsLoading: false,
+  openClawChannels: null,
+  openClawChannelsLoading: false,
+  openClawChannelsError: '',
+  channelQR: null,
+  channelQRPollTimer: null,
+  modelProviderSelection: '',
+  modelSearch: '',
+  modelDraftMode: 'create',
+  modelDraftFamilyKey: '',
+  modelDraftKey: '',
+  modelDraftOriginalKey: '',
+  channelSearch: '',
+  modelTestResult: null,
+  modelTestLoading: false,
+  testingModelKey: '',
   openClawAgents: null,
   openClawAgentsLoading: false,
   agentChats: {},
+  agentChatHistoryLoading: {},
+  agentChatHistoryLoaded: {},
+  agentChatAtBottom: {},
   agentInternetAllowlists: {},
+  agentModelSelections: {},
   agentSourceSelections: {},
+  agentChatProgress: {},
+  chatAttachments: [],
   showApiKey: false,
   formContext: null,
   selectedRows: {
@@ -90,6 +111,16 @@ const authState = {
   authenticated: false,
   masterPassword: '',
 };
+
+const chatProgressSteps = [
+  ['received','接收消息'],
+  ['local-retrieval','本地检索'],
+  ['attachments','附件处理'],
+  ['knowledge-agent','知识整理'],
+  ['domain-agents','业务 Agent'],
+  ['coordinator-agent','统一汇总'],
+];
+const chatProgressTimers = {};
 
 const pageMeta = {
   overview: ['概览', 'STA-100 / 工作台', '📊'],
@@ -216,7 +247,6 @@ const files = [
 ];
 
 const scheduledJobs = [];
-const boundPlugins = [];
 
 const news = [
   { category: '欧洲市场', title: '欧洲自行车产业进入补库存周期，渠道更关注小批量和快速交付', summary: '多家欧洲经销商在 2026 年下半年调整采购节奏，订单结构从大批量预采转向小批量、多批次。', source: 'Bike Europe', time: '2026-08-10 09:10', relevance: '96%' },
@@ -442,7 +472,6 @@ async function loadBusinessData(force = false) {
     replaceRecords(news, data.news);
     replaceRecords(recommendations, data.recommendations);
     replaceRecords(scheduledJobs, data.jobs);
-    replaceRecords(boundPlugins, data.plugins);
     replaceRecords(unifiedSearchCustomers, []);
     replaceRecords(localDiscoveryLeads, []);
     const overview = data.overview || {};
@@ -458,6 +487,7 @@ async function loadBusinessData(force = false) {
     state.newsTopics = preferences.newsTopics || state.newsTopics;
     state.newsSources = preferences.newsSources || state.newsSources;
     state.agentInternetAllowlists = preferences.agentAllowlists || state.agentInternetAllowlists;
+    state.agentModelSelections = preferences.agentModelOverrides || state.agentModelSelections;
     state.businessDataLoaded = true;
     renderPage();
   } catch (error) {
@@ -466,7 +496,7 @@ async function loadBusinessData(force = false) {
 }
 
 function currentPreferences() {
-  return { recommendationEnabled:state.subscription, newsShowLimit:state.newsShowLimit, newsFrequency:state.newsFrequency, newsCountries:state.newsCountries, newsTopics:state.newsTopics, newsSources:state.newsSources, agentAllowlists:state.agentInternetAllowlists };
+  return { recommendationEnabled:state.subscription, newsShowLimit:state.newsShowLimit, newsFrequency:state.newsFrequency, newsCountries:state.newsCountries, newsTopics:state.newsTopics, newsSources:state.newsSources, agentAllowlists:state.agentInternetAllowlists, agentModelOverrides:state.agentModelSelections };
 }
 
 async function savePreferences() {
@@ -582,7 +612,7 @@ async function loadOpenClawModels(force = false) {
   state.openClawModelsLoading = true;
   if (state.page === 'settings' && state.settingsTab === 'model') renderPage();
   try {
-    state.openClawModels = await apiFetch('/api/v1/openclaw/models');
+    state.openClawModels = await apiFetch('/api/v1/settings/model');
     state.modelConfigured = Boolean(state.openClawModels.configured);
   } catch (error) {
     state.openClawModels = { configured: false, models: [], providers: [], error: error.message };
@@ -592,6 +622,25 @@ async function loadOpenClawModels(force = false) {
     if (state.page === 'settings' && state.settingsTab === 'model') renderPage();
   }
   return state.openClawModels;
+}
+
+async function loadOpenClawChannels(force = false) {
+  if (state.openClawChannelsLoading || (state.openClawChannels && !force)) return state.openClawChannels;
+  state.openClawChannelsLoading = true;
+  state.openClawChannelsError = '';
+  if (state.page === 'settings' && state.settingsTab === 'channels') renderPage();
+  try {
+    const data = await apiFetch('/api/v1/openclaw/channels');
+    state.openClawChannels = data.channels || [];
+  } catch (error) {
+    state.openClawChannels = [];
+    state.openClawChannelsError = error.message || '未知错误';
+    if (state.page === 'settings' && state.settingsTab === 'channels') toast('OpenClaw 通道读取失败', error.message, 'warning');
+  } finally {
+    state.openClawChannelsLoading = false;
+    if (state.page === 'settings' && state.settingsTab === 'channels') renderPage();
+  }
+  return state.openClawChannels;
 }
 
 async function loadOpenClawAgents(force = false) {
@@ -628,8 +677,11 @@ async function loadSystemHealth(force = false) {
 
 function loadPageOpenClawData() {
   if (state.page === 'agents') void loadOpenClawAgents();
+  if (state.page === 'agents') void loadOpenClawModels();
   if (state.page !== 'settings') return;
   if (state.settingsTab === 'model') void loadOpenClawModels();
+  if (state.settingsTab === 'channels') void loadOpenClawChannels();
+  if (state.settingsTab === 'scheduler') void loadOpenClawAgents();
   if (state.settingsTab === 'system') {
     void loadOpenClawStatus();
     void loadOpenClawAgents();
@@ -641,8 +693,10 @@ function setPage(page) {
   if (!pageMeta[page]) return;
   state.page = page;
   const [title, eyebrow, emoji] = pageMeta[page];
-  document.getElementById('pageTitle').textContent = `${emoji} ${title}`;
-  document.getElementById('pageEyebrow').textContent = eyebrow;
+  const pageTitle = document.getElementById('pageTitle');
+  const pageEyebrow = document.getElementById('pageEyebrow');
+  if (pageTitle) pageTitle.textContent = `${emoji} ${title}`;
+  if (pageEyebrow) pageEyebrow.textContent = eyebrow;
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.page === page));
   document.getElementById('sidebar').classList.remove('open');
   renderPage();
@@ -1063,7 +1117,7 @@ async function saveNewsSettings() {
 }
 
 function renderSettings() {
-  const tabs = [['model','模型设置','brain-circuit'],['plugins','插件绑定','plug-zap'],['scheduler','定时任务','clock-3'],['backup','智能体备份','archive'],['security','数据安全','shield-check'],['system','系统信息','monitor-cog'],['upgrade','版本升级','package-open']];
+  const tabs = [['model','模型设置','brain-circuit'],['channels','通道绑定','message-square'],['scheduler','定时任务','clock-3'],['backup','智能体备份','archive'],['security','数据安全','shield-check'],['system','系统信息','monitor-cog'],['upgrade','版本升级','package-open']];
   return `<div class="settings-layout">
     <nav class="settings-nav panel">${tabs.map(([k,l,i])=>`<button class="${state.settingsTab===k?'active':''}" data-settings-tab="${k}">${icon(i)}${l}</button>`).join('')}</nav>
     <div class="settings-content">${renderSettingsContent()}</div>
@@ -1073,39 +1127,535 @@ function renderSettings() {
 function renderSettingsContent() {
   const content = {
     model: renderModelSettings(),
-    plugins: renderPluginSettings(),
+    channels: renderChannelSettings(),
     scheduler: renderSchedulerSettings(),
     backup: `<section class="panel"><header class="panel-head"><div><h3>智能体数据备份</h3><p>仅备份智能体初始化配置、技能、会话和用户操作记录</p></div></header><div class="setting-row"><span class="setting-icon">${icon('folder-cog')}</span><div class="setting-copy"><strong>备份目录</strong><span>当前由设备后端写入 STA-100 本地备份区；外置目录授权方式待部署确认</span></div><button class="button small" data-action="choose-backup">目录说明</button></div><div class="setting-row"><span class="setting-icon">${icon('archive')}</span><div class="setting-copy"><strong>本次会话最近备份</strong><span>${state.lastAgentBackup?`${escapeHTML(state.lastAgentBackup.path)} · ${formatBytes(state.lastAgentBackup.bytes)}`:'尚未执行备份'}</span></div><button class="button primary small" data-action="agent-backup">立即备份</button></div></section>`,
     security: `<section class="panel"><header class="panel-head"><div><h3>数据安全</h3><p>客户私有数据归客户所有，并保存在设备本地</p></div></header><div class="setting-row"><span class="setting-icon">${icon('user-round-cog')}</span><div class="setting-copy"><strong>本机登录账户</strong><span>当前用户名：${escapeHTML(authState.username)} · 密码以随机盐哈希保存在设备本机配置文件</span></div><button class="button small" data-action="account-settings">${icon('key-round')}修改用户名和密码</button></div>${[['本地存储区','客户上传文件、业务数据库和索引均存储在本机','hard-drive'],['敏感信息保护','模型密钥由 OpenClaw 凭据库保存；页面和日志不回显完整密钥','lock-keyhole'],['联网调用边界','仅把完成当前任务所需的最小内容发送给已配置模型','network'],['操作记录','记录关键增删改、导出、模型和升级操作','scroll-text']].map(([n,d,i])=>`<div class="setting-row"><span class="setting-icon">${icon(i)}</span><div class="setting-copy"><strong>${n}</strong><span>${d}</span></div>${badge('Active')}</div>`).join('')}</section>`,
     system: renderSystemSettings(),
     upgrade: `<section class="panel"><header class="panel-head"><div><h3>版本升级</h3><p>仅支持管理员手动导入离线升级包，不启用在线热升级</p></div><span class="badge neutral">离线升级</span></header><div class="setting-row"><span class="setting-icon">${icon('package-check')}</span><div class="setting-copy"><strong>当前版本</strong><span>1.0.0 · ARM64 · 构建 20260810</span></div><span class="setting-value">运行正常</span></div><div class="setting-row"><span class="setting-icon">${icon('shield-check')}</span><div class="setting-copy"><strong>升级保护</strong><span>安装前校验签名、版本、架构和磁盘空间，并自动创建业务数据、配置及 Agent 数据快照</span></div>${badge('Active')}</div><div class="setting-row"><span class="setting-icon">${icon('upload')}</span><div class="setting-copy"><strong>导入离线升级包</strong><span>选择本机 .zip 包，校验通过并经管理员确认后安装；完成后设备自动重启</span></div><button class="button primary small" data-action="offline-upgrade">${icon('upload')}选择升级包</button></div><div class="setting-row"><span class="setting-icon">${icon('history')}</span><div class="setting-copy"><strong>最近升级记录</strong><span>暂无升级记录 · 日志和旧版本将保留用于失败回滚</span></div><button class="button small" data-action="upgrade-history">查看记录</button></div></section>`,
   };
-  return content[state.settingsTab];
+  return content[state.settingsTab] || content.model;
 }
 
-function renderPluginSettings() {
-  const iconFor=id=>id==='wechat'?'message-circle':'send';
-  const descriptionFor=id=>id==='wechat'?'消息推送与交互入口':'消息、文档和通知能力';
-  return `<section class="panel"><header class="panel-head"><div><h3>插件绑定</h3><p>首期提供微信和飞书；具体凭据、推送内容和同步范围仍需客户确认</p></div></header>${boundPlugins.map(plugin=>`<div class="setting-row"><span class="setting-icon">${icon(iconFor(plugin.id))}</span><div class="setting-copy"><strong>${escapeHTML(plugin.name)}</strong><span>${descriptionFor(plugin.id)} · ${escapeHTML(plugin.status)}</span></div>${badge(plugin.enabled?'Review':'Draft')}<button class="button small" data-action="bind-plugin" data-id="${escapeAttr(plugin.id)}">${plugin.enabled?'管理':'绑定'}</button></div>`).join('')||`<div class="empty-state"><p>未读取到插件配置。</p></div>`}</section>`;
+function renderChannelSettings() {
+  const channels = state.openClawChannels || [];
+  if (state.openClawChannelsLoading && !channels.length) return `<section class="panel"><div class="empty-state">${icon('loader-circle')}<div><h3>正在读取 OpenClaw 通道目录</h3><p>读取当前固定版本支持的聊天通道和账号状态。</p></div></div></section>`;
+  if (state.openClawChannelsError && !channels.length) return `<section class="panel"><header class="panel-head"><div><h3>💬 通道绑定</h3><p>OpenClaw 通道目录未能加载。</p></div><button class="icon-button" data-action="refresh-openclaw-channels" title="重试读取通道" aria-label="重试读取通道">${icon('refresh-cw')}</button></header><div class="model-warning error"><span>${icon('triangle-alert')} 通道读取失败：${escapeHTML(state.openClawChannelsError)}</span></div><div class="empty-state"><p>请重试；如果仍失败，请检查 OpenClaw CLI 和服务状态。</p></div></section>`;
+  const query = normalizeSearch(state.channelSearch);
+  const visibleChannels = query ? channels.filter(channel=>channelSearchText(channel).includes(query)) : channels;
+  const configured = channels.filter(channel=>Boolean(channel.configured) || Number(channel.accountCount||0)>0).length;
+  return `<section class="panel"><header class="panel-head"><div><h3>💬 通道绑定</h3><p>通道用于让飞书、企业微信、微信、Telegram、Slack 等入口真实接入 OpenClaw。客户侧只需要配置模型和通道，系统内部能力由应用自动处理。</p></div><button class="icon-button" data-action="refresh-openclaw-channels" title="刷新通道状态" aria-label="刷新通道状态">${icon('refresh-cw')}</button></header><div class="model-warning"><span>${icon('info')} 页面状态区分通道包、插件启用、账号绑定和运行状态；扫码绑定会直接写入 OpenClaw，成功后自动重启网关并复核。</span></div><div class="settings-filter-row"><label class="field-search">${icon('search')}<input id="channelSearch" value="${escapeAttr(state.channelSearch)}" placeholder="搜索飞书、微信、企业微信、Telegram、Slack 等通道"></label><span class="result-count">已配置 ${configured} 个 · 当前显示 ${visibleChannels.length}/${channels.length}</span></div><div class="settings-subsection">${visibleChannels.map(renderChannelSettingRow).join('')||`<div class="empty-state"><p>未找到匹配通道</p></div>`}</div></section>`;
+}
+
+function channelSearchText(channel) {
+  return normalizeSearch([channel.id,channel.name,channel.description,channel.origin,channel.status].join(' '));
+}
+
+function renderChannelSettingRow(channel) {
+  const installed = Boolean(channel.installed);
+  const accountCount = Number(channel.accountCount||0);
+  const status = channelBusinessStatus(channel);
+  const bindingButton = installed
+    ? `<button class="button primary small" data-action="open-channel-binding" data-channel="${escapeAttr(channel.id)}">${icon('link')}绑定</button>`
+    : `<button class="button small" disabled title="需要先安装 OpenClaw 通道包">${icon('package-x')}未安装</button>`;
+  return `<div class="setting-row"><span class="setting-icon">${icon('message-circle')}</span><div class="setting-copy"><strong>${escapeHTML(channel.name)} <small class="secondary-text">${escapeHTML(channel.id)}</small></strong><span>${escapeHTML(channel.description||'OpenClaw 聊天通道')} · ${escapeHTML(channel.origin||'installable')} · 已绑定账号 ${accountCount} 个<br><small class="secondary-text">${escapeHTML(status.description)}</small></span></div><span class="badge ${status.className}">${status.label}</span><div class="inline-actions compact-actions"><button class="button small" data-action="channel-status" data-channel="${escapeAttr(channel.id)}">${icon('activity')}状态</button>${bindingButton}</div></div>`;
+}
+
+function channelBusinessStatus(channel) {
+  if (!channel.installed) return { label: '未安装', className: 'neutral', description: '当前通道包未安装，不能直接绑定。' };
+  if (!channel.enabled) return { label: '未启用', className: 'amber', description: '通道包已存在，但 OpenClaw 配置中尚未启用。' };
+  if (channel.configured && channel.running) return { label: '已连接', className: 'green', description: '账号已配置，通道正在运行。' };
+  if (channel.configured && channel.lastError && channel.lastError !== 'not configured') return { label: '绑定异常', className: 'red', description: `账号已配置，但通道运行异常：${channel.lastError}` };
+  if (channel.configured) return { label: '已绑定', className: 'green', description: '账号凭据已写入 OpenClaw，当前未运行。' };
+  return { label: '可绑定', className: 'blue', description: '通道已启用但尚未绑定账号。' };
 }
 
 function renderSchedulerSettings() {
-  return `<section class="panel"><header class="panel-head"><div><h3>定时任务</h3><p>内置任务不能删除，但可以编辑内容、频率和开关</p></div><button class="button small" data-action="new-schedule">${icon('plus')}新增任务</button></header>${scheduledJobs.map(job=>`<div class="setting-row"><span class="setting-icon">${icon('timer-reset')}</span><div class="setting-copy"><strong>${escapeHTML(job.name)}</strong><span>${escapeHTML(job.schedule||'未设置')} · ${job.nextRun?`下次运行 ${escapeHTML(job.nextRun)}`:'尚未计算下次运行时间'}${job.error?` · ${escapeHTML(job.error)}`:''}</span></div>${badge(job.enabled?(job.status==='Ready'?'Active':'Review'):'Draft')}<button class="table-icon" data-action="edit-schedule" data-id="${escapeAttr(job.id)}" title="编辑">${icon('pencil')}</button></div>`).join('')||`<div class="empty-state"><p>未读取到定时任务。</p></div>`}</section>`;
+  return `<section class="panel"><header class="panel-head"><div><h3>定时任务</h3><p>内置任务不能删除，但可以编辑说明、Prompt、Agent、频率和开关；尚未接入真实数据源的任务会保持待确认状态。</p></div><button class="button small" data-action="new-schedule">${icon('plus')}新增任务</button></header>${scheduledJobs.map(job=>`<div class="setting-row"><span class="setting-icon">${icon('timer-reset')}</span><div class="setting-copy"><strong>${escapeHTML(job.name)}</strong><span>${escapeHTML(job.description||'未填写任务说明')} · Agent：${escapeHTML(job.agentId||'未指定')} · ${escapeHTML(job.schedule||'未设置')}${job.error?` · ${escapeHTML(job.error)}`:''}</span></div>${badge(job.enabled?(job.status==='Ready'?'Active':'Review'):'Draft')}<button class="table-icon" data-action="edit-schedule" data-id="${escapeAttr(job.id)}" title="编辑">${icon('pencil')}</button></div>`).join('')||`<div class="empty-state"><p>未读取到定时任务。</p></div>`}</section>`;
 }
 
 function renderModelSettings() {
   const data = state.openClawModels;
-  const current = data?.resolvedDefault || data?.defaultModel || '正在读取 OpenClaw 配置';
-  const providers = data?.providers || [];
-  const configuredProviders = providers.filter(provider => provider.configured).map(provider => provider.provider);
-  const providerText = configuredProviders.length ? configuredProviders.join('、') : '尚未读取到可用凭据';
-  const modelCount = data?.models?.filter(model => model.available && !model.missing).length || 0;
-  return `<section class="panel"><header class="panel-head"><div><h3>🤖 模型设置</h3><p>直接读取并编排本机 OpenClaw 的模型和凭据配置</p></div>${state.openClawModelsLoading ? '<span class="badge neutral">读取中</span>' : badge(data?.configured?'Active':'Review')}</header>
+  const configuredModelList = getConfiguredModelList();
+  const catalogModels = getModelCatalog();
+  const current = currentDefaultModelKey();
+  const configuredKeys = configuredModelKeySet();
+  const test = state.modelTestResult;
+  const testText = state.modelTestLoading ? '正在写入 OpenClaw 并发起真实模型调用。' : test ? `${test.ok?'正常':'异常'}：${escapeHTML(test.message||'验证完成')} · ${Number(test.durationMs||0).toLocaleString()} ms` : '新建或编辑模型时，可先测试连通性再保存；已保存密钥不会回传明文。';
+  const testedCount = configuredModelList.filter(model=>model.lastTestStatus==='passed').length;
+  const unconfiguredCount = catalogModels.filter(model=>!configuredKeys.has(model.key)).length;
+  return `<section class="panel model-config-panel"><header class="panel-head"><div><h3>🤖 模型设置</h3><p>用于配置多个可用模型。未手动设置默认模型时，系统会使用第一个配置成功的模型作为默认模型。</p></div><button class="icon-button" data-action="refresh-openclaw-models" title="刷新配置状态" aria-label="刷新配置状态">${icon('refresh-cw')}</button></header>
     ${data?.error ? `<div class="model-warning"><span>${icon('triangle-alert')} ${escapeHTML(data.error)}</span><button class="button small" data-action="refresh-openclaw-models">重试</button></div>` : ''}
-    <div class="setting-row"><span class="setting-icon">${icon('cloud-cog')}</span><div class="setting-copy"><strong>当前默认模型</strong><span>由 OpenClaw 解析，未单独指定模型的 Agent 继承该值</span></div><span class="setting-value">${escapeHTML(current)}</span><button class="button small" data-action="configure-model" ${!data?'disabled':''}>配置</button></div>
-    <div class="setting-row"><span class="setting-icon">${icon('key-round')}</span><div class="setting-copy"><strong>模型凭据</strong><span>通过标准输入写入 OpenClaw 凭据库；页面和接口均不回显密钥</span></div><span class="setting-value">${escapeHTML(providerText)}</span><button class="button small" data-action="configure-model" ${!data?'disabled':''}>更新</button></div>
-    <div class="setting-row"><span class="setting-icon">${icon('list-checks')}</span><div class="setting-copy"><strong>可用模型</strong><span>来自 OpenClaw models list，不使用前端预置结果</span></div><span class="setting-value">${state.openClawModelsLoading?'读取中':`${modelCount} 个`}</span><button class="button small" data-action="refresh-openclaw-models">${icon('refresh-cw')}刷新</button></div>
+    <div class="model-config-body">
+      <div class="model-warning"><span>${icon('info')} API Key 会按所选模型自动写入 OpenClaw 对应凭据；模型列表只展示已配置记录，新增时只能选择一个未配置模型。</span></div>
+      <div class="model-list-shell">
+        <div class="model-list-head"><strong>模型列表</strong><span>${configuredModelList.length} 个已保存 · ${testedCount} 个正常 · ${unconfiguredCount} 个待配置</span><button class="button small" data-action="model-draft-new">${icon('plus')}新建模型</button></div>
+        <div class="model-status-list model-status-list-wide">${configuredModelList.map(model=>renderConfiguredModelRow(model,current)).join('')||`<div class="empty-state compact-empty"><p>当前还没有已配置模型。</p></div>`}</div>
+      </div>
+    </div>
   </section>`;
+}
+
+function normalizeSearch(value) { return String(value||'').trim().toLowerCase(); }
+function modelSearchText(model) { return normalizeSearch([model.key,model.name,model.input,model.source,...(model.tags||[])].join(' ')); }
+
+function modelProvider(modelID) { return String(modelID||'').split('/')[0] || ''; }
+function getModelCatalog() { return state.openClawModels?.catalogModels||state.openClawModels?.models||[]; }
+function getConfiguredModelList() { return state.openClawModels?.configuredModels||[]; }
+function configuredModelKeySet() { return new Set(getConfiguredModelList().map(model=>model.key)); }
+function configuredModelKeys() { return getConfiguredModelList().map(model=>model.key).filter(Boolean); }
+function currentDefaultModelKey() { return state.openClawModels?.resolvedDefault || state.openClawModels?.defaultModel || ''; }
+function configuredModelEntry(modelKey) { return getConfiguredModelList().find(model=>model.key===modelKey) || null; }
+function testedConfiguredModelKeys() { return getConfiguredModelList().filter(model=>model.lastTestStatus==='passed').map(model=>model.key); }
+function normalizeAgentMessageModel(model='') {
+  const selected = String(model || '').trim();
+  const defaultModel = currentDefaultModelKey();
+  return selected && selected !== defaultModel ? selected : '';
+}
+function agentSelectedModel(agentID) {
+  return normalizeAgentMessageModel(state.agentModelSelections?.[agentID] || '');
+}
+function providerEndpointSummary(provider) {
+  const providerKey = String(provider || '').toLowerCase();
+  const defaults = {
+    deepseek: '官方入口 api.deepseek.com',
+    mistral: '官方入口 api.mistral.ai',
+    moonshot: '官方入口 api.moonshot.cn',
+    novita: '官方入口 api.novita.ai',
+    nvidia: '官方入口 integrate.api.nvidia.com',
+    together: '官方入口 api.together.xyz',
+    anthropic: '官方入口 api.anthropic.com',
+    cohere: '官方入口 api.cohere.com',
+    volcengine: '火山方舟国内入口',
+    'volcengine-plan': '火山方舟国内入口',
+    byteplus: 'BytePlus 国际入口',
+    'byteplus-plan': 'BytePlus 国际入口',
+  };
+  if (providerKey !== 'minimax') return defaults[providerKey] || 'OpenClaw 默认入口';
+  const url = state.openClawModels?.providerBaseUrls?.[providerKey] || '';
+  if (url.includes('minimaxi.com')) return '国内站 api.minimaxi.com';
+  if (url.includes('minimax.io')) return '国际站 api.minimax.io';
+  return '自动识别';
+}
+function modelEndpointModeFor(provider) {
+  const providerKey = String(provider || '').toLowerCase();
+  const url = state.openClawModels?.providerBaseUrls?.[providerKey] || '';
+  if (url.includes('minimaxi.com')) return 'domestic';
+  if (url.includes('minimax.io')) return 'international';
+  return 'auto';
+}
+function findModelByKey(key) {
+  const models = [...getModelCatalog(), ...getConfiguredModelList()];
+  return models.find(model=>model.key===key) || null;
+}
+function draftModelKey() {
+  const catalog = getModelCatalog();
+  if (!catalog.length) return state.modelDraftKey || '';
+  const configured = configuredModelKeySet();
+  const key = state.modelDraftKey;
+  if (state.modelDraftMode === 'edit' && key && configured.has(key)) return key;
+  if (state.modelDraftMode !== 'edit' && key && catalog.some(model=>model.key===key) && !configured.has(key)) return key;
+  const next = catalog.find(model=>!configured.has(model.key)) || catalog[0];
+  state.modelDraftMode = 'create';
+  state.modelDraftKey = next?.key || '';
+  return state.modelDraftKey;
+}
+function defaultModelForKeys(keys, preferred='') {
+  keys = [...new Set((keys||[]).filter(Boolean))];
+  if (!keys.length) return '';
+  const current = currentDefaultModelKey();
+  if (current && keys.includes(current)) return current;
+  if (preferred && keys.includes(preferred) && state.modelTestResult?.ok) return preferred;
+  const passed = getConfiguredModelList().find(model=>keys.includes(model.key)&&model.lastTestStatus==='passed');
+  return passed?.key || keys[0];
+}
+function modelFamilyName(model) {
+  return String(model?.name||model?.key||'').replace(/\s+(M|V|R|K|Opus|Sonnet|Haiku|Flash|Pro|Mini|Nano|Large|Medium|Small|Highspeed|Coding|Thinking|Preview|latest|\\d|\\.)[\w\s.:-]*$/i,'').trim() || String(model?.name||model?.key||'模型');
+}
+function modelFamilyKey(model) {
+  const name = modelFamilyName(model).toLowerCase();
+  return name || String(model?.key||'').split('/').slice(-1)[0].toLowerCase();
+}
+function modelFamilies(models=[]) {
+  const groups = new Map();
+  models.forEach(model=>{
+    const key = modelFamilyKey(model);
+    if (!groups.has(key)) groups.set(key,{key,name:modelFamilyName(model),models:[]});
+    groups.get(key).models.push(model);
+  });
+  return [...groups.values()].sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans-CN')).map(group=>({...group,models:group.models.sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans-CN'))}));
+}
+function modelSeriesLabel(model) {
+  const name = String(model?.name||'').trim();
+  const key = String(model?.key||'').trim();
+  const provider = key.split('/')[0] || '';
+  const text = `${name} ${key}`.toLowerCase();
+  const known = [
+    ['minimax','MiniMax'],['deepseek','DeepSeek'],['claude','Claude'],['kimi','Kimi'],
+    ['moonshot','Kimi'],['glm','GLM'],['doubao','Doubao'],['gemini','Gemini'],
+    ['mistral','Mistral'],['codestral','Mistral'],['devstral','Mistral'],['magistral','Mistral'],
+    ['llama','Llama'],['gpt','GPT'],['codex','Codex'],['nemotron','Nemotron'],
+    ['xiaomi','Xiaomi'],['mimo','Xiaomi'],['ark','Ark'],['command','Command'],['seed','Seed'],
+  ];
+  const match = known.find(([token])=>text.includes(token));
+  if (match) return match[1];
+  const firstWord = name.split(/\s+/)[0] || provider || '模型';
+  return firstWord.replace(/[-_]?v?\d[\w.:/-]*$/i,'').replace(/[-_]+$/,'') || firstWord;
+}
+function modelSeriesKey(model) {
+  return normalizeSearch(modelSeriesLabel(model));
+}
+function modelVersionLabel(model) {
+  const name = String(model?.name||model?.key||'').trim();
+  const series = modelSeriesLabel(model);
+  const escaped = series.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const value = name.replace(new RegExp(`^${escaped}[\\s:_-]*`,'i'),'').trim();
+  return value || name;
+}
+function modelSeriesGroups(models=[]) {
+  const groups = new Map();
+  models.forEach(model=>{
+    const key = modelSeriesKey(model);
+    if (!groups.has(key)) groups.set(key,{key,name:modelSeriesLabel(model),models:[]});
+    groups.get(key).models.push(model);
+  });
+  return [...groups.values()]
+    .sort((a,b)=>a.name.localeCompare(b.name,'zh-Hans-CN'))
+    .map(group=>({...group,models:group.models.sort((a,b)=>{
+      const preferred = {minimax:'minimax',deepseek:'deepseek',claude:'anthropic',mistral:'mistral',kimi:'moonshot',glm:'byteplus',doubao:'volcengine',xiaomi:'xiaomi'}[group.key] || group.key;
+      const providerA = modelProvider(a.key);
+      const providerB = modelProvider(b.key);
+      const directA = providerA===preferred ? 0 : 1;
+      const directB = providerB===preferred ? 0 : 1;
+      if (directA !== directB) return directA-directB;
+      return modelVersionLabel(a).localeCompare(modelVersionLabel(b),'zh-Hans-CN');
+    })}));
+}
+function renderModelSelectOptions(selected='', options={}) {
+  const configured = configuredModelKeySet();
+  let models = getModelCatalog().filter(model=>!options.onlyUnconfigured || !configured.has(model.key) || model.key===options.includeKey);
+  if (selected && !models.some(model=>model.key===selected)) {
+    const selectedModel = findModelByKey(selected);
+    if (selectedModel) models = [selectedModel, ...models];
+  }
+  return (modelFamilies(models).map(group=>`<optgroup label="${escapeAttr(group.name)}">${group.models.map(model=>{
+    const testLabel = model.lastTestStatus==='passed'?'正常':model.lastTestStatus==='failed'?'异常':'未测试';
+    const configuredLabel = configured.has(model.key)?'已配置':'待配置';
+    return `<option value="${escapeAttr(model.key)}" ${model.key===selected?'selected':''}>${escapeHTML(model.name)} · ${escapeHTML(model.key)}（${configuredLabel} / ${testLabel}）</option>`;
+  }).join('')}</optgroup>`).join('') || '<option value="">暂无模型</option>');
+}
+function renderModelTree(models, configuredKeys, current) {
+  return modelFamilies(models).map(group=>{
+    const allChecked = group.models.length > 0 && group.models.every(model=>configuredKeys.has(model.key));
+    const someChecked = group.models.some(model=>configuredKeys.has(model.key));
+    return `<div class="model-family">
+      <label class="model-family-head"><input class="checkbox" type="checkbox" data-model-family="${escapeAttr(group.key)}" ${allChecked?'checked':''} data-indeterminate="${someChecked&&!allChecked?'true':'false'}"><span>${icon(someChecked?'folder-check':'folder')}</span><strong>${escapeHTML(group.name)}</strong><small>${group.models.length} 个版本</small></label>
+      <div class="model-variant-list">${group.models.map(model=>renderModelVariant(model,configuredKeys.has(model.key),model.key===current)).join('')}</div>
+    </div>`;
+  }).join('') || `<div class="empty-state compact-empty"><p>未读取到模型目录。</p></div>`;
+}
+function renderModelVariant(model, checked, isDefault) {
+  const testLabel = model.lastTestStatus==='passed'?'正常':model.lastTestStatus==='failed'?'异常':'未测试';
+  return `<label class="model-variant ${isDefault?'is-default':''}">
+    <input class="checkbox" type="checkbox" data-model-key="${escapeAttr(model.key)}" ${checked?'checked':''}>
+    <span class="model-variant-copy"><strong>${escapeHTML(model.name)}</strong><small>${escapeHTML(model.key)}</small></span>
+    <span class="model-variant-meta">${escapeHTML(model.input||'text')} · ${model.contextWindow?Number(model.contextWindow).toLocaleString()+' ctx · ':''}${escapeHTML(testLabel)}</span>
+    ${isDefault?'<span class="badge green">默认</span>':''}
+  </label>`;
+}
+function renderConfiguredModelRow(model,current) {
+  const statusText = modelStatusText(model.lastTestStatus);
+  const active = state.modelDraftMode === 'edit' && state.modelDraftKey === model.key;
+  const testing = state.modelTestLoading && state.testingModelKey === model.key;
+  const endpoint = providerEndpointSummary(modelProvider(model.key));
+  const defaultBadge = model.key===current ? `<span class="badge blue">默认</span>` : '';
+  const healthBadge = testing
+    ? `<span class="badge amber">检测中</span>`
+    : model.lastTestStatus==='passed'
+      ? `<span class="badge green">正常</span>`
+      : model.lastTestStatus==='failed'
+        ? `<span class="badge red">异常</span>`
+        : `<span class="badge neutral">未测试</span>`;
+  const statusLine = testing
+    ? '正在写入 OpenClaw 并验证连通性...'
+    : `${escapeHTML(statusText)} · ${escapeHTML(endpoint)}${model.lastTestAt?` · ${escapeHTML(formatLocalizedDateTime(model.lastTestAt))}`:''}${model.lastTestMessage?` · ${escapeHTML(shortModelTestMessage(model.lastTestMessage))}`:''}`;
+  return `<div class="setting-row configured-model-row ${active?'is-editing':''} ${testing?'is-testing':''}"><span class="setting-icon">${icon(testing?'loader-circle':'bot')}</span><div class="setting-copy"><strong>${escapeHTML(model.name)} <small class="secondary-text">${escapeHTML(model.key)}</small></strong><span>${statusLine}</span></div>${defaultBadge}${healthBadge}<div class="inline-actions compact-actions"><button class="button small" data-action="test-configured-model" data-model="${escapeAttr(model.key)}" title="使用已保存 OpenClaw 配置测试" ${state.modelTestLoading?'disabled':''}>${icon(testing?'loader-circle':'play')}${testing?'测试中':'测试'}</button><button class="button small" data-action="edit-model-config" data-model="${escapeAttr(model.key)}" ${state.modelTestLoading?'disabled':''}>${icon('pencil')}编辑</button><button class="button small" data-action="select-default-model" data-model="${escapeAttr(model.key)}" ${model.key===current||state.modelTestLoading?'disabled':''}>设为默认</button><button class="button danger small" data-action="delete-model-config" data-model="${escapeAttr(model.key)}" ${state.modelTestLoading?'disabled':''}>${icon('trash-2')}删除</button></div></div>`;
+}
+
+function modelStatusText(status) {
+  if (status === 'passed') return '正常';
+  if (status === 'failed') return '异常';
+  return '未测试';
+}
+
+function shortModelTestMessage(message) {
+  const text = String(message || '').trim();
+  if (!text) return '';
+  return text.length > 42 ? `${text.slice(0, 42)}...` : text;
+}
+
+function formatLocalizedDateTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const locale = state.lang === 'en' ? 'en-US' : 'zh-CN';
+  return date.toLocaleString(locale, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatLocalizedTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const locale = state.lang === 'en' ? 'en-US' : 'zh-CN';
+  return date.toLocaleTimeString(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function applyModelTestResultToState(result) {
+  const modelKey = result?.model;
+  if (!modelKey || !state.openClawModels) return;
+  const status = result.ok ? 'passed' : 'failed';
+  const message = result.message || (result.ok ? 'API Key 已写入 OpenClaw，并完成真实模型调用验证' : '模型验证未通过');
+  const testedAt = result.testedAt || new Date().toISOString();
+  for (const listName of ['models','catalogModels','configuredModels']) {
+    const list = state.openClawModels[listName];
+    if (!Array.isArray(list)) continue;
+    list.forEach(model=>{
+      if (model.key === modelKey) {
+        model.lastTestStatus = status;
+        model.lastTestMessage = message;
+        model.lastTestAt = testedAt;
+      }
+    });
+  }
+}
+
+function draftModelCatalog() {
+  const configured = configuredModelKeySet();
+  const editing = state.modelDraftMode === 'edit';
+  let models = getModelCatalog().filter(model=>!configured.has(model.key) || (editing && model.key===state.modelDraftOriginalKey));
+  if (editing && state.modelDraftKey && !models.some(model=>model.key===state.modelDraftKey)) {
+    const model = findModelByKey(state.modelDraftKey);
+    if (model) models = [model, ...models];
+  }
+  return models;
+}
+
+function draftModelFamilyKey() {
+  const groups = modelSeriesGroups(draftModelCatalog());
+  if (state.modelDraftFamilyKey && groups.some(group=>group.key===state.modelDraftFamilyKey)) return state.modelDraftFamilyKey;
+  const selected = findModelByKey(state.modelDraftKey) || draftModelCatalog()[0];
+  return selected ? modelSeriesKey(selected) : groups[0]?.key || '';
+}
+
+function renderModelFamilySelectOptions(selectedFamily='') {
+  return modelSeriesGroups(draftModelCatalog()).map(group=>`<option value="${escapeAttr(group.key)}" ${group.key===selectedFamily?'selected':''}>${escapeHTML(group.name)}</option>`).join('') || '<option value="">暂无可选模型</option>';
+}
+
+function renderModelVersionSelectOptions(familyKey='', selected='') {
+  const groups = modelSeriesGroups(draftModelCatalog());
+  const group = groups.find(item=>item.key===familyKey) || groups[0];
+  if (!group) return '<option value="">暂无可选版本</option>';
+  const modelKey = selected && group.models.some(model=>model.key===selected) ? selected : group.models[0]?.key || '';
+  return group.models.map(model=>`<option value="${escapeAttr(model.key)}" ${model.key===modelKey?'selected':''}>${escapeHTML(modelVersionLabel(model))} · ${escapeHTML(model.key)}</option>`).join('');
+}
+
+function renderModelConfigurationForm() {
+  const editing = state.modelDraftMode === 'edit';
+  const selectedKey = draftModelKey();
+  const familyKey = draftModelFamilyKey();
+  const selectedProvider = modelProvider(selectedKey);
+  const endpointMode = modelEndpointModeFor(selectedProvider);
+  const test = state.modelTestResult;
+  const testText = state.modelTestLoading ? '正在写入 OpenClaw 并发起真实模型调用。' : test ? `${test.ok?'正常':'异常'}：${escapeHTML(test.message||'验证完成')} · ${Number(test.durationMs||0).toLocaleString()} ms` : '建议先测试连通性，再保存配置。列表中的测试会使用已保存的 API Key 真实验证。';
+  return `<div class="form-grid model-modal-form">
+    <div class="form-field"><label for="modelFamilySelect">模型</label><select class="select" id="modelFamilySelect">${renderModelFamilySelectOptions(familyKey)}</select><small>先选模型系列。</small></div>
+    <div class="form-field"><label for="modelVersionSelect">模型小版本</label><select class="select" id="modelVersionSelect">${renderModelVersionSelectOptions(familyKey, selectedKey)}</select><small>每次只选一个版本。</small></div>
+    <div class="form-field full"><label for="modelEndpointMode">API Key 接入区域</label><select class="select" id="modelEndpointMode"><option value="auto" ${endpointMode==='auto'?'selected':''}>自动识别</option><option value="domestic" ${endpointMode==='domestic'?'selected':''}>国内站 · api.minimaxi.com</option><option value="international" ${endpointMode==='international'?'selected':''}>国际站 · api.minimax.io</option></select><small>MiniMax 的 sk-cp 开头 Key 建议使用国内站；非 MiniMax 模型保持自动即可。保存后会同步到 OpenClaw 当前配置。</small></div>
+    <div class="form-field full"><label for="modelAPIKey">API Key</label><div class="credential-field"><input class="input" id="modelAPIKey" type="password" autocomplete="new-password" placeholder="${editing?'留空则使用已保存 API Key 测试或保存':'请输入该模型对应的 API Key'}"><button class="icon-button" type="button" data-action="toggle-api-key-input" title="显示 API Key" aria-label="显示或隐藏 API Key">${icon('eye')}</button></div><small>可临时显示本次输入；已保存密钥由 OpenClaw 存储且不会回传明文。</small></div>
+    <div class="model-test-summary full ${test?.ok?'success':test?'warning':''}">${icon(test?.ok?'badge-check':test?'triangle-alert':'info')}${testText}<small>测试连通性会先把 API Key 和接入区域写入 OpenClaw，再向所选模型发起真实调用；只有真实调用成功才会标记为正常。</small></div>
+  </div>`;
+}
+
+function openModelConfigurationForm(mode='create', model='') {
+  state.modelDraftMode = mode === 'edit' ? 'edit' : 'create';
+  state.modelDraftOriginalKey = state.modelDraftMode === 'edit' ? model : '';
+  state.modelDraftKey = model || '';
+  const selected = findModelByKey(state.modelDraftKey) || draftModelCatalog()[0];
+  state.modelDraftFamilyKey = selected ? modelSeriesKey(selected) : '';
+  state.modelTestResult = null;
+  const title = state.modelDraftMode === 'edit' ? '编辑模型' : '新建模型';
+  openModal({
+    title,
+    eyebrow:'设置 / 模型',
+    wide:true,
+    body:renderModelConfigurationForm(),
+    footer:`<button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="test-model-config" ${state.modelTestLoading?'disabled':''}>${icon(state.modelTestLoading?'loader-circle':'play')}${state.modelTestLoading?'测试中':'测试连通性'}</button><button class="button" data-action="save-model-config" ${state.modelTestLoading?'disabled':''}>${icon('save')}保存</button>`
+  });
+}
+
+function refreshModelConfigurationModal() {
+  if (document.getElementById('modalBackdrop')?.hidden) return;
+  const body = document.getElementById('modalBody');
+  const footer = document.getElementById('modalFooter');
+  if (!body || !footer || !document.getElementById('modelVersionSelect')) return;
+  body.innerHTML = renderModelConfigurationForm();
+  footer.innerHTML = `<button class="button" data-action="close-modal">取消</button><button class="button primary" data-action="test-model-config" ${state.modelTestLoading?'disabled':''}>${icon(state.modelTestLoading?'loader-circle':'play')}${state.modelTestLoading?'测试中':'测试连通性'}</button><button class="button" data-action="save-model-config" ${state.modelTestLoading?'disabled':''}>${icon('save')}保存</button>`;
+  applyIcons();
+}
+
+function syncModelVersionSelect() {
+  const family = document.getElementById('modelFamilySelect')?.value || '';
+  state.modelDraftFamilyKey = family;
+  const version = document.getElementById('modelVersionSelect');
+  if (!version) return;
+  version.innerHTML = renderModelVersionSelectOptions(family, '');
+  state.modelDraftKey = version.value || '';
+  const endpoint = document.getElementById('modelEndpointMode');
+  if (endpoint) endpoint.value = modelEndpointModeFor(modelProvider(state.modelDraftKey));
+  state.modelTestResult = null;
+  applyIcons();
+}
+function syncModelFamilyIndeterminate() {
+  document.querySelectorAll('[data-model-family]').forEach(input=>{
+    const familyBlock = input.closest('.model-family');
+    const items = familyBlock ? [...familyBlock.querySelectorAll('[data-model-key]')] : [];
+    const checked = items.filter(item=>item.checked).length;
+    input.checked = items.length > 0 && checked === items.length;
+    input.indeterminate = checked > 0 && checked < items.length;
+  });
+}
+function selectedModelKeys() {
+  return [...document.querySelectorAll('[data-model-key]:checked')].map(input=>input.dataset.modelKey).filter(Boolean);
+}
+function toggleModelFamily(input) {
+  const familyBlock = input.closest('.model-family');
+  if (!familyBlock) return;
+  familyBlock.querySelectorAll('[data-model-key]').forEach(item=>{item.checked=input.checked;});
+  input.indeterminate = false;
+  state.modelTestResult=null;
+  syncModelFamilyIndeterminate();
+}
+function updateModelSelection() {
+  const modelSelect = document.getElementById('modelVersionSelect');
+  if (modelSelect) state.modelDraftKey = modelSelect.value;
+  const selected = findModelByKey(state.modelDraftKey);
+  if (selected) state.modelDraftFamilyKey = modelSeriesKey(selected);
+  const endpoint = document.getElementById('modelEndpointMode');
+  if (endpoint) endpoint.value = modelEndpointModeFor(modelProvider(state.modelDraftKey));
+  state.modelTestResult=null;
+}
+
+function updateModelFamilySelection() {
+  syncModelVersionSelect();
+}
+
+async function selectDefaultModel(model) {
+  try {
+    const selectedModels = new Set(configuredModelKeys());
+    if (!selectedModels.has(model)) selectedModels.add(model);
+    await apiFetch('/api/v1/settings/model', { method: 'PATCH', body: JSON.stringify({ model: '', defaultModel: model, selectedModels:[...selectedModels], apiKey: '' }) });
+    await loadOpenClawModels(true);
+    toast('默认模型已更新', model, 'success');
+  } catch (error) {
+    toast('默认模型设置失败', error.message, 'warning');
+  }
+}
+
+function openChannelBinding(channel) {
+  const info = (state.openClawChannels||[]).find(item=>item.id===channel);
+  const installed = info ? Boolean(info.installed) : true;
+  stopChannelQRPoll();
+  state.channelQR = null;
+  openModal({
+    title:`${info?.name||channel} 通道绑定`,
+    eyebrow:'OpenClaw / 通道',
+    body:`<div class="form-grid">${!installed?`<div class="model-warning full"><span>${icon('triangle-alert')} 当前通道包尚未安装，不能开始扫码绑定。</span></div>`:''}<div class="form-field"><label for="channelAccount">账号</label><input class="input" id="channelAccount" value="default" placeholder="扫码登录使用的账号标识"><small>默认账号会写入 channels.feishu；也支持填写 OpenClaw 账号 ID。</small></div><div class="form-field"><label for="channelDomain">接入区域</label><select class="select" id="channelDomain"><option value="feishu">飞书（中国大陆）</option><option value="lark">Lark（国际版）</option></select><small>扫码时会按所选区域请求 OpenClaw 官方授权服务。</small></div><div class="model-warning full"><span>${icon('info')} 点击“开始扫码”后生成二维码。扫码授权成功后，应用会自动写入 OpenClaw、重启网关并复核状态。</span></div><div class="channel-qr-panel full" id="channelQRPanel"><div class="channel-qr-empty">${icon('qrcode')}<strong>尚未生成二维码</strong><span>二维码只在本次绑定会话内有效。</span></div></div><pre class="channel-status-box full" id="channelStatusBox">尚未读取状态</pre></div>`,
+    footer:`<button class="button" data-action="channel-status" data-channel="${escapeAttr(channel)}">${icon('activity')}查看状态</button><button class="button primary" ${installed?'':'disabled'} data-action="save-channel-binding" data-channel="${escapeAttr(channel)}">${icon('qrcode')}开始扫码</button>`
+  });
+  void refreshChannelStatus(channel);
+}
+
+async function refreshChannelStatus(channel) {
+  const target=document.getElementById('channelStatusBox');
+  if(target)target.textContent='正在读取 OpenClaw 通道状态...';
+  try {
+    const status=await apiFetch(`/api/v1/openclaw/channels/${encodeURIComponent(channel)}/status`);
+    if(target)target.textContent=JSON.stringify(status,null,2);
+  } catch(error) {
+    if(target)target.textContent=`状态读取失败：${error.message}`;
+    toast('通道状态读取失败',error.message,'warning');
+  }
+}
+
+function stopChannelQRPoll() {
+  if (state.channelQRPollTimer) {
+    clearTimeout(state.channelQRPollTimer);
+    state.channelQRPollTimer = null;
+  }
+}
+
+function renderChannelQRPanel(data) {
+  const target=document.getElementById('channelQRPanel');
+  if (!target) return;
+  if (!data) {
+    target.innerHTML=`<div class="channel-qr-empty">${icon('qrcode')}<strong>尚未生成二维码</strong><span>二维码只在本次绑定会话内有效。</span></div>`;
+    applyIcons();
+    return;
+  }
+  const terminal = data.status === 'pending'
+    ? `<div class="channel-qr-progress"><div class="progress"><span style="width:62%"></span></div><span>${escapeHTML(data.message||'等待扫码确认')} · 自动检查中</span></div>`
+    : `<div class="channel-qr-result ${data.status==='success'?'success':'error'}">${icon(data.status==='success'?'check-circle-2':'triangle-alert')}<span>${escapeHTML(data.message||'绑定流程已结束')}</span></div>`;
+  target.innerHTML=`<div class="channel-qr-content">${data.qrDataUrl?`<img class="channel-qr-image" src="${escapeAttr(data.qrDataUrl)}" alt="飞书扫码二维码">`:`<div class="channel-qr-fallback">${icon('link')}<span>当前环境未生成图片二维码，请打开授权地址扫码：</span><a href="${escapeAttr(data.qrUrl||'')}" target="_blank" rel="noopener">${escapeHTML(data.qrUrl||'')}</a></div>`}<div class="channel-qr-meta"><strong>请使用飞书移动端扫描</strong><span>账号：${escapeHTML(data.account||'default')} · 区域：${escapeHTML(data.domain||'feishu')}</span><small>有效期至 ${escapeHTML(data.expiresAt||'')}</small>${terminal}</div></div>`;
+  applyIcons();
+}
+
+async function pollChannelQRCode(channel, sessionID) {
+  try {
+    const data=await apiFetch(`/api/v1/openclaw/channels/${encodeURIComponent(channel)}/qr/${encodeURIComponent(sessionID)}/status`);
+    state.channelQR=data;
+    renderChannelQRPanel(data);
+    if (data.status==='pending') {
+      state.channelQRPollTimer=setTimeout(()=>void pollChannelQRCode(channel,sessionID),Math.max(Number(data.interval||5),3)*1000);
+      return;
+    }
+    if (data.status==='success') {
+      await loadOpenClawChannels(true);
+      await refreshChannelStatus(channel);
+      toast('通道绑定成功',`${channel} 已写入 OpenClaw 并完成网关重启。`,'success');
+    } else {
+      toast('通道绑定未完成',data.message||'请重新生成二维码。','warning');
+    }
+  } catch(error) {
+    const target=document.getElementById('channelQRPanel');
+    if(target)target.innerHTML=`<div class="channel-qr-result error">${icon('triangle-alert')}<span>轮询绑定状态失败：${escapeHTML(error.message)}</span></div>`;
+    applyIcons();
+    toast('通道绑定状态读取失败',error.message,'warning');
+  }
+}
+
+async function saveChannelBinding(channel) {
+  stopChannelQRPoll();
+  try {
+    const data=await apiFetch(`/api/v1/openclaw/channels/${encodeURIComponent(channel)}/qr/start`,{method:'POST',body:JSON.stringify({
+      account:formText('channelAccount')||'default',
+      domain:document.getElementById('channelDomain')?.value||'feishu',
+    })});
+    state.channelQR=data;
+    renderChannelQRPanel(data);
+    toast('二维码已生成','请使用飞书移动端扫描并确认授权。');
+    state.channelQRPollTimer=setTimeout(()=>void pollChannelQRCode(channel,data.sessionId),Math.max(Number(data.interval||5),3)*1000);
+  } catch(error) {
+    toast('通道绑定失败',error.message,'warning');
+  }
 }
 
 function renderSystemSettings() {
@@ -1171,6 +1721,12 @@ function wirePageSpecific() {
   if (supplierSearch) supplierSearch.addEventListener('input', e => { state.supplierSearch=e.target.value; renderPage(); requestAnimationFrame(()=>{ const input=document.getElementById('supplierSearch'); if(input){input.focus();input.setSelectionRange(input.value.length,input.value.length);} }); });
   const supplierSort = document.getElementById('supplierSort');
   if (supplierSort) supplierSort.addEventListener('change', e => { state.supplierSort=e.target.value; renderPage(); });
+  const modelFamilySelect = document.getElementById('modelFamilySelect');
+  if (modelFamilySelect) modelFamilySelect.addEventListener('change', updateModelFamilySelection);
+  const modelVersionSelect = document.getElementById('modelVersionSelect');
+  if (modelVersionSelect) modelVersionSelect.addEventListener('change', updateModelSelection);
+  const channelSearch = document.getElementById('channelSearch');
+  if (channelSearch) channelSearch.addEventListener('input', e => { state.channelSearch=e.target.value; renderPage(); requestAnimationFrame(()=>{ const input=document.getElementById('channelSearch'); if(input){input.focus();input.setSelectionRange(input.value.length,input.value.length);} }); });
   const fileSearch = document.getElementById('fileSearch');
   if (fileSearch) fileSearch.addEventListener('input', e => { state.fileSearch=e.target.value; renderPage(); requestAnimationFrame(()=>{ const input=document.getElementById('fileSearch'); if(input){input.focus();input.setSelectionRange(input.value.length,input.value.length);} }); });
   document.querySelectorAll('[data-select-all]').forEach(header => {
@@ -1234,7 +1790,7 @@ function syncOverlayScroll() {
   const commandOpen = !document.getElementById('commandBackdrop').hidden;
   document.body.style.overflow = modalOpen || drawerOpen || commandOpen ? 'hidden' : '';
 }
-function closeModal() { document.getElementById('modalBackdrop').hidden = true; syncOverlayScroll(); }
+function closeModal() { stopChannelQRPoll(); document.getElementById('modalBackdrop').hidden = true; syncOverlayScroll(); }
 function openDrawer({ title, eyebrow='记录详情', body }) {
   document.getElementById('drawerTitle').textContent = title;
   document.getElementById('drawerEyebrow').textContent = eyebrow;
@@ -1375,17 +1931,95 @@ function getAgentAllowlist(agentID) {
   return state.agentInternetAllowlists[agentID] || defaultInternetAllowlist;
 }
 
+function formatAttachmentSize(size=0) {
+  const value = Number(size || 0);
+  if (!value) return '';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value/1024).toFixed(1)} KB`;
+  return `${(value/1024/1024).toFixed(1)} MB`;
+}
+
+function isImageAttachment(attachment={}) {
+  return String(attachment.mime || '').startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(String(attachment.name || ''));
+}
+
+function renderMessageAttachments(message={}) {
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  if (!attachments.length) return '';
+  const status = message.attachmentStatus || '已随消息提交';
+  return `<div class="message-attachments">${attachments.map(attachment=>{
+    const meta = [attachment.mime, formatAttachmentSize(attachment.size)].filter(Boolean).join(' · ');
+    if (isImageAttachment(attachment) && attachment.previewUrl) {
+      return `<figure class="message-attachment image-attachment"><img src="${escapeAttr(attachment.previewUrl)}" alt="${escapeAttr(attachment.name || '图片附件')}"><figcaption><strong>${escapeHTML(attachment.name || '图片附件')}</strong>${meta?`<small>${escapeHTML(meta)}</small>`:''}</figcaption></figure>`;
+    }
+    return `<div class="message-attachment file-attachment">${icon('paperclip')}<span><strong>${escapeHTML(attachment.name || '附件')}</strong>${meta?`<small>${escapeHTML(meta)}</small>`:''}</span></div>`;
+  }).join('')}<div class="attachment-status">${icon(message.attachmentStatus==='发送失败'?'triangle-alert':'check-circle-2')}${escapeHTML(status)}</div></div>`;
+}
+
+function renderComposerAttachment(attachment, index, attachmentIndex) {
+  const thumb = isImageAttachment(attachment) && attachment.previewUrl ? `<img src="${escapeAttr(attachment.previewUrl)}" alt="${escapeAttr(attachment.name || '图片附件')}">` : icon('paperclip');
+  return `<span class="composer-attachment-item">${thumb}<strong>${escapeHTML(attachment.name)}</strong><small>${escapeHTML(attachment.status || '待发送')}</small><button class="table-icon" data-action="remove-chat-attachment" data-agent="${index}" data-index="${attachmentIndex}" title="移除附件">${icon('x')}</button></span>`;
+}
+
+function normalizePipelineStage(stage={}) {
+  const key = String(stage.stage || '').trim();
+  const label = {
+    received: '接收消息',
+    'local-retrieval': '本地检索',
+    attachments: '附件处理',
+    'knowledge-agent': '知识整理',
+    'domain-agents': '业务 Agent',
+    'coordinator-agent': '统一汇总',
+  }[key] || key || '处理阶段';
+  const status = String(stage.status || '').toLowerCase();
+  return { key, label, status, detail: stage.detail || '' };
+}
+
+function renderMessagePipeline(message={}) {
+  const pipeline = Array.isArray(message.pipeline) ? message.pipeline.map(normalizePipelineStage) : [];
+  if (!pipeline.length) return '';
+  return `<div class="message-pipeline">${pipeline.map(stage=>`<span class="pipeline-chip ${escapeAttr(stage.status || 'pending')}" title="${escapeAttr(stage.detail || '')}">${icon(stage.status==='failed'?'circle-x':stage.status==='partial'?'triangle-alert':'check-circle-2')}${escapeHTML(stage.label)}</span>`).join('')}</div>`;
+}
+
+function renderAgentChatProgress(agentID) {
+  const progress = state.agentChatProgress[agentID];
+  if (!progress) return '';
+  const activeIndex = Math.max(0, Number(progress.index || 0));
+  const failed = progress.status === 'failed';
+  const done = progress.status === 'done';
+  const steps = progress.steps || chatProgressSteps.map(([key,label])=>({key,label}));
+  const elapsedSeconds = Number.isFinite(Number(progress.elapsedSeconds))
+    ? Number(progress.elapsedSeconds)
+    : progress.startedAt
+      ? Math.max(0, Math.floor((Date.now() - progress.startedAt) / 1000))
+      : 0;
+  const elapsedLabel = elapsedSeconds < 60
+    ? `${elapsedSeconds} 秒`
+    : `${Math.floor(elapsedSeconds / 60)} 分 ${elapsedSeconds % 60} 秒`;
+  const timeState = failed ? 'failed' : done ? 'done' : 'running';
+  return `<div class="chat-progress ${failed?'failed':done?'done':''}"><div class="progress-line">${steps.map((step,index)=>{
+    const stateClass = failed && index===activeIndex ? 'failed' : index < activeIndex || done ? 'done' : index === activeIndex ? 'active' : 'pending';
+    return `<span class="${stateClass}"><i></i>${escapeHTML(step.label)}</span>`;
+  }).join('')}</div><div class="progress-time"><span>生成进度</span><div class="progress-time-track"><i class="${timeState}"></i></div><strong>${elapsedLabel}</strong></div><div class="progress-detail"><span class="progress-detail-copy">${icon(failed?'circle-x':done?'check-circle-2':'loader-circle')}${escapeHTML(progress.detail || (done ? 'OpenClaw 已返回结果' : 'OpenClaw 正在处理'))}</span><span class="progress-elapsed">${icon('clock-3')}已用时 ${elapsedLabel}</span></div></div>`;
+}
+
 function renderAgentMessage(message, index) {
-  const sources = (message.sources || []).map(escapeHTML).join('、');
-  return `<div class="message-row ${message.role === 'user' ? 'user' : ''}"><div class="message ${message.role === 'user' ? 'user' : message.error ? 'error' : ''}">${escapeHTML(message.text).replace(/\n/g,'<br>')}${sources ? `<div class="sources">本次来源：${sources}</div>` : ''}${message.error ? `<button class="link-button message-retry" data-action="retry-chat" data-agent="${index}" data-message="${escapeAttr(message.retry || '')}">重新发送</button>` : ''}<time>${escapeHTML(message.time || '')}</time></div></div>`;
+  const modelMeta = message.model ? ` · ${message.provider ? `${escapeHTML(message.provider)}/` : ''}${escapeHTML(message.model)}` : '';
+  return `<div class="message-row ${message.role === 'user' ? 'user' : ''}"><div class="message ${message.role === 'user' ? 'user' : message.error ? 'error' : ''}">${escapeHTML(message.text).replace(/\n/g,'<br>')}${renderMessageAttachments(message)}${message.error && message.retry ? `<button class="link-button message-retry" data-action="retry-chat" data-agent="${index}" data-message="${escapeAttr(message.retry || '')}">重新发送</button>` : ''}<time>${escapeHTML(message.time || '')}${modelMeta}</time></div></div>`;
 }
 
 function renderAgentChatBody(index) {
   const a = agents[index];
   const agentID = agentIDs[index];
   const messages = state.agentChats[agentID] || [];
-  const allowlist = getAgentAllowlist(agentID);
-  return `<div class="chat-layout"><aside class="chat-side"><div class="chat-side-head"><h3>统一智能处理</h3><span>系统编排</span></div><div class="chat-source policy-fixed"><span class="agent-icon">${icon('workflow')}</span><span><strong>本地证据 → 协调器 → 领域 Agent</strong><small>页面不区分本地或联网结果，系统按规则自动整合。</small></span></div><button class="button ghost small source-settings-button" data-action="agent-allowlist" data-agent="${index}">${icon('shield-check')}联网白名单</button><p class="chat-source-note">白名单属于后台安全配置，不是本次聊天的来源选择。冲突数据会全部保留并标记。</p></aside><section class="chat-main"><header class="chat-head"><div><strong>${agentEmojis[index]} ${escapeHTML(a[0])}</strong><span>${escapeHTML(agentID)}</span></div><span>${badge(state.modelConfigured?'Active':'Review')}</span></header><div class="chat-quick-prompts">${a[5].map(v=>`<button data-action="chat-quick-prompt" data-agent="${index}" data-prompt="${escapeAttr(v)}">${escapeHTML(v)}</button>`).join('')}</div><div class="chat-messages" id="chatMessages"><div class="message-row"><div class="message"><strong>${escapeHTML(a[0])}</strong><br>已连接 STA-100 统一任务协调器，消息将按页面规则分发给专业智能体。<time>当前会话</time></div></div>${messages.map(m=>renderAgentMessage(m,index)).join('')}</div><div class="chat-status" id="chatStatus" aria-live="polite"></div><div class="chat-input-row"><textarea class="textarea" id="chatInput" maxlength="32768" rows="2" placeholder="向 ${escapeAttr(a[0])} 发送消息，Enter 发送，Shift+Enter 换行"></textarea><button class="icon-button chat-send" data-action="send-chat" data-agent="${index}" title="发送消息" aria-label="发送消息">${icon('send')}</button></div></section></div>`;
+  const historyLoading = Boolean(state.agentChatHistoryLoading[agentID]);
+  const testedModels = (state.openClawModels?.configuredModels||[]).filter(model=>model.lastTestStatus==='passed');
+  const selectedModel = agentSelectedModel(agentID);
+  const defaultModel = currentDefaultModelKey();
+  const modelOptions = testedModels.map(model=>`<option value="${escapeAttr(model.key)}" ${selectedModel===model.key?'selected':''}>${escapeHTML(model.name)} · ${escapeHTML(model.key)}</option>`).join('');
+  const attachments = state.chatAttachments.map((attachment,attachmentIndex)=>renderComposerAttachment(attachment,index,attachmentIndex)).join('');
+  const modelHint = state.openClawModelsLoading ? '<div class="chat-model-loading"><span class="secondary-text">正在读取 OpenClaw 已配置模型...</span></div>' : !testedModels.length ? '<div class="chat-model-loading"><span class="secondary-text">暂无可选模型，请先到设置中配置并测试模型。</span></div>' : '';
+  return `<div class="chat-layout"><aside class="chat-side"><div class="chat-side-head"><h3>统一智能处理</h3><span>系统编排</span></div><div class="chat-source policy-fixed"><span class="agent-icon">${icon('workflow')}</span><span><strong>本地证据 → 协调器 → 领域 Agent</strong><small>页面不区分本地或联网结果，系统按规则自动整合。</small></span></div><button class="button ghost small source-settings-button" data-action="agent-allowlist" data-agent="${index}">${icon('shield-check')}联网白名单</button><p class="chat-source-note">白名单属于后台安全配置，不是本次聊天的来源选择。冲突数据会全部保留并标记。</p></aside><section class="chat-main"><header class="chat-head"><div><strong>${agentEmojis[index]} ${escapeHTML(a[0])}</strong><span>${escapeHTML(agentID)}</span></div><span>${badge(state.modelConfigured?'Active':'Review')}</span></header><div class="chat-quick-prompts">${a[5].map(v=>`<button data-action="chat-quick-prompt" data-agent="${index}" data-prompt="${escapeAttr(v)}">${escapeHTML(v)}</button>`).join('')}</div><div class="chat-messages" id="chatMessages"><div class="message-row"><div class="message"><strong>${escapeHTML(a[0])}</strong><br>已连接 STA-100 统一任务协调器，消息将按页面规则分发给专业智能体。<time>当前会话</time></div></div>${historyLoading ? `<div class="chat-history-loading">${icon('loader-circle')}正在从 OpenClaw 读取历史消息...</div>` : ''}${messages.map(m=>renderAgentMessage(m,index)).join('')}</div><div class="chat-status" id="chatStatus" aria-live="polite">${renderAgentChatProgress(agentID)}</div><div class="chat-composer"><div id="chatAttachmentList" class="chat-attachments composer-attachments">${attachments}</div><div class="chat-compose-tools"><div class="chat-attachment-tools"><button class="icon-button" data-action="choose-chat-image" title="上传图片" aria-label="上传图片">${icon('image-up')}</button><button class="icon-button" data-action="choose-chat-file" title="上传文件" aria-label="上传文件">${icon('file-up')}</button></div><span class="chat-compose-spacer"></span><label class="chat-model-picker"><span>模型</span><select class="select" id="chatModelSelect"><option value="">使用默认模型${defaultModel?`（${escapeHTML(defaultModel)}）`:''}</option>${modelOptions}</select></label><input id="chatImageInput" type="file" accept="image/*" hidden><input id="chatFileInput" type="file" hidden></div>${modelHint}<div class="chat-input-row"><textarea class="textarea" id="chatInput" maxlength="32768" rows="2" placeholder="向 ${escapeAttr(a[0])} 发送消息，Enter 发送，Shift+Enter 换行"></textarea><button class="icon-button chat-send" data-action="send-chat" data-agent="${index}" title="发送消息" aria-label="发送消息">${icon('send')}</button></div></div></section></div>`;
 }
 
 function wireChatInput(index) {
@@ -1396,22 +2030,197 @@ function wireChatInput(index) {
       void sendAgentMessage(index);
     }
   });
+  document.getElementById('chatModelSelect')?.addEventListener('change', event=>{
+    const agentID = agentIDs[index];
+    const selected = normalizeAgentMessageModel(event.target.value);
+    if (selected) state.agentModelSelections[agentID]=selected;
+    else delete state.agentModelSelections[agentID];
+    void savePreferences();
+  });
+  document.getElementById('chatImageInput')?.addEventListener('change', event=>void uploadChatAttachment(event.target.files?.[0], index));
+  document.getElementById('chatFileInput')?.addEventListener('change', event=>void uploadChatAttachment(event.target.files?.[0], index));
+  const box = document.getElementById('chatMessages');
+  box?.addEventListener('scroll', () => {
+    const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
+    state.agentChatAtBottom[agentIDs[index]] = distance < 40;
+  }, {passive:true});
   input?.focus();
 }
 
-function showAgentChat(index,prompt='') {
+async function uploadChatAttachment(file,index) {
+  if(!file)return;
+  if(file.size>25*1024*1024){toast('附件过大','单个附件不能超过 25 MB。','warning');return;}
+  const form=new FormData();
+  form.append('file',file);
+  try {
+    const data=await apiFetch('/api/v1/assistant/attachments',{method:'POST',body:form});
+    const attachment = data.attachment || {};
+    attachment.localId = `att-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    attachment.previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : '';
+    attachment.status = '已上传到 STA-100，待随消息发送';
+    state.chatAttachments.push(attachment);
+    refreshAgentChat(index);
+  } catch(error) { toast('附件上传失败',error.message,'warning'); }
+}
+
+async function showAgentChat(index,prompt='') {
   const a=agents[index];
+  const agentID = agentIDs[index];
+  state.agentChatAtBottom[agentID] = true;
   openModal({title:a[0],eyebrow:`OpenClaw Agent / ${agentIDs[index]}`,wide:true,body:renderAgentChatBody(index)});
   wireChatInput(index);
+  requestAnimationFrame(()=>scrollAgentChatToBottom(agentID));
+  void loadAgentChatHistory(index);
+  if (!state.openClawModels && !state.openClawModelsLoading) {
+    void loadOpenClawModels(true).then(() => {
+      if (document.getElementById('modalBody')) refreshAgentChat(index);
+    });
+  } else if (!state.openClawModelsLoading && state.page === 'agents') {
+    void loadOpenClawModels().then(() => {
+      if (document.getElementById('modalBody')) refreshAgentChat(index);
+    });
+  }
   if (prompt) setTimeout(()=>void sendAgentMessage(index,prompt),0);
 }
 
-function refreshAgentChat(index) {
+function refreshAgentChat(index, options={}) {
+  const agentID = agentIDs[index];
+  const previous = document.getElementById('chatMessages');
+  const previousTop = previous?.scrollTop || 0;
+  const wasAtBottom = previous ? (previous.scrollHeight - previous.scrollTop - previous.clientHeight < 40) : true;
   document.getElementById('modalBody').innerHTML = renderAgentChatBody(index);
   applyIcons();
   wireChatInput(index);
   const box = document.getElementById('chatMessages');
-  if (box) box.scrollTop = box.scrollHeight;
+  if (!box) return;
+  const shouldStick = Boolean(options.forceBottom || wasAtBottom || state.agentChatAtBottom[agentID] !== false);
+  if (shouldStick) {
+    box.scrollTop = box.scrollHeight;
+    state.agentChatAtBottom[agentID] = true;
+    requestAnimationFrame(()=>scrollAgentChatToBottom(agentID));
+  } else {
+    box.scrollTop = previousTop;
+    state.agentChatAtBottom[agentID] = false;
+  }
+}
+
+function scrollAgentChatToBottom(agentID) {
+  const box = document.getElementById('chatMessages');
+  if (!box) return;
+  box.scrollTop = box.scrollHeight;
+  state.agentChatAtBottom[agentID] = true;
+}
+
+function historyMessageTime(value) {
+  return formatLocalizedDateTime(value);
+}
+
+function normalizeAgentHistoryMessage(message={}) {
+  const role = message.role === 'user' ? 'user' : 'agent';
+  const error = Boolean(message.error);
+  return {
+    role,
+    text: String(message.text || '').trim() || (error ? `OpenClaw 调用失败：${message.error}` : 'OpenClaw 未返回文本内容。'),
+    error,
+    model: message.model || '',
+    provider: message.provider || '',
+    time: historyMessageTime(message.createdAt),
+  };
+}
+
+async function loadAgentChatHistory(index) {
+  const agentID = agentIDs[index];
+  if (state.agentChatHistoryLoaded[agentID] || state.agentChatHistoryLoading[agentID]) return;
+  state.agentChatHistoryLoading[agentID] = true;
+  refreshAgentChat(index, {forceBottom:true});
+  try {
+    const data = await apiFetch(`/api/v1/assistant/history?agentId=${encodeURIComponent(agentID)}&sessionKey=${encodeURIComponent(`sta100-${agentID}`)}&limit=200`);
+    const persisted = (data.messages || []).map(normalizeAgentHistoryMessage).filter(message=>message.text);
+    const current = state.agentChats[agentID] || [];
+    const existingKeys = new Set(persisted.map(message=>`${message.role}|${message.text}|${message.time}`));
+    const pending = current.filter(message=>!existingKeys.has(`${message.role}|${message.text}|${message.time}`));
+    state.agentChats[agentID] = persisted.concat(pending);
+    state.agentChatHistoryLoaded[agentID] = true;
+    state.agentChatHistoryLoading[agentID] = false;
+    refreshAgentChat(index, {forceBottom:true});
+  } catch (error) {
+    state.agentChatHistoryLoading[agentID] = false;
+    state.agentChatHistoryLoaded[agentID] = true;
+    refreshAgentChat(index, {forceBottom:true});
+    toast('历史消息读取失败', error.message, 'warning');
+  }
+}
+
+function cloneChatAttachments(attachments=[]) {
+  return attachments.map(attachment=>({
+    name: attachment.name,
+    path: attachment.path,
+    mime: attachment.mime,
+    size: attachment.size,
+    previewUrl: attachment.previewUrl || '',
+    localId: attachment.localId || '',
+  }));
+}
+
+function payloadChatAttachments(attachments=[]) {
+  return attachments.map(attachment=>({
+    name: attachment.name,
+    path: attachment.path,
+    mime: attachment.mime,
+    size: attachment.size,
+  }));
+}
+
+function removeChatAttachment(index, attachmentIndex) {
+  const [attachment] = state.chatAttachments.splice(Number(attachmentIndex), 1);
+  if (attachment?.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  refreshAgentChat(Number(index || 0));
+}
+
+function startAgentProgress(agentID,index,hasAttachments=false) {
+  stopAgentProgress(agentID);
+  const steps = chatProgressSteps
+    .filter(([key])=>hasAttachments || key !== 'attachments')
+    .map(([key,label])=>({key,label}));
+  state.agentChatProgress[agentID] = {index:0,status:'running',steps,startedAt:Date.now(),detail:'STA-100 已接收消息，准备提交 OpenClaw'};
+  refreshAgentChat(index);
+  chatProgressTimers[agentID] = window.setInterval(()=>{
+    const progress = state.agentChatProgress[agentID];
+    if (!progress || progress.status !== 'running') return;
+    const maxIndex = Math.max(0, progress.steps.length - 2);
+    progress.index = Math.min(maxIndex, Number(progress.index || 0) + 1);
+    progress.detail = progress.steps[progress.index]?.label ? `${progress.steps[progress.index].label}处理中...` : 'OpenClaw 正在处理';
+    const status = document.getElementById('chatStatus');
+    if (status) {
+      status.innerHTML = renderAgentChatProgress(agentID);
+      applyIcons();
+    }
+  }, 1800);
+}
+
+function stopAgentProgress(agentID) {
+  if (chatProgressTimers[agentID]) {
+    window.clearInterval(chatProgressTimers[agentID]);
+    delete chatProgressTimers[agentID];
+  }
+}
+
+function finishAgentProgress(agentID,index,result,errorMessage='') {
+  stopAgentProgress(agentID);
+  const failed = Boolean(errorMessage);
+  const previous = state.agentChatProgress[agentID] || {};
+  const elapsedSeconds = previous.startedAt ? Math.max(0, Math.floor((Date.now() - previous.startedAt) / 1000)) : 0;
+  const pipeline = Array.isArray(result?.pipeline) && result.pipeline.length ? result.pipeline.map(normalizePipelineStage) : null;
+  const steps = pipeline ? pipeline.map(stage=>({key:stage.key,label:stage.label})) : (previous.steps || chatProgressSteps.map(([key,label])=>({key,label})));
+  const failedIndex = pipeline ? Math.max(0,pipeline.findIndex(stage=>stage.status==='failed')) : -1;
+  state.agentChatProgress[agentID] = {
+    steps,
+    index: failed ? (failedIndex >= 0 ? failedIndex : Math.max(0,steps.length-1)) : Math.max(0,steps.length-1),
+    status: failed ? 'failed' : 'done',
+    elapsedSeconds,
+    detail: failed ? errorMessage : 'OpenClaw 已返回结果，消息已完成汇总',
+  };
+  refreshAgentChat(index);
 }
 
 async function sendAgentMessage(index, providedMessage='') {
@@ -1427,24 +2236,35 @@ async function sendAgentMessage(index, providedMessage='') {
     return;
   }
   const agentID = agentIDs[index];
+  const model = normalizeAgentMessageModel(agentSelectedModel(agentID));
   const sources = ['本地业务数据库','客户私有知识库','联网检索'];
   const allowlist = getAgentAllowlist(agentID);
   const history = state.agentChats[agentID] || (state.agentChats[agentID] = []);
-  history.push({role:'user',text:message,sources,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
-  refreshAgentChat(index);
-  const status = document.getElementById('chatStatus');
+  const payloadAttachments = payloadChatAttachments(state.chatAttachments);
+  const displayAttachments = cloneChatAttachments(state.chatAttachments);
+  state.chatAttachments = [];
+  const userMessage = {role:'user',text:message,sources,attachments:displayAttachments,attachmentStatus:displayAttachments.length?'正在提交给 OpenClaw':'',time:formatLocalizedTime(new Date().toISOString())};
+  history.push(userMessage);
+  state.agentChatAtBottom[agentID] = true;
+  if (input && !providedMessage) input.value = '';
+  startAgentProgress(agentID,index,payloadAttachments.length>0);
   const sendButton = document.querySelector('.chat-send');
-  if (status) status.innerHTML = `${icon('loader-circle')} ${escapeHTML(agents[index][0])} 正在通过 OpenClaw 处理...`;
   if (sendButton) sendButton.disabled = true;
   applyIcons();
   try {
-    const result = await apiFetch('/api/v1/assistant/query', {method:'POST', body:JSON.stringify({page:'agents',feature:'agent-chat',message,sessionKey:`sta100-${agentID}`,context:{targetAgent:agentID,allowlist}})});
+    const requestBody = {page:'agents',feature:'agent-chat',message,attachments:payloadAttachments,sessionKey:`sta100-${agentID}`,context:{targetAgent:agentID,allowlist}};
+    if (model) requestBody.model = model;
+    const result = await apiFetch('/api/v1/assistant/query', {method:'POST', body:JSON.stringify(requestBody)});
+    userMessage.attachmentStatus = displayAttachments.length ? `已随消息提交给 OpenClaw（${result.attachments?.length || displayAttachments.length} 个附件）` : '';
     applyTokenUsage(result.tokenUsage);
-    history.push({role:'agent',text:result.text || 'OpenClaw 未返回文本内容。',sources:result.usedAgents||[],time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
+    history.push({role:'agent',text:result.text || 'OpenClaw 未返回文本内容。',sources:result.usedAgents||[],pipeline:result.pipeline||[],time:formatLocalizedTime(new Date().toISOString())});
+    finishAgentProgress(agentID,index,result);
   } catch (error) {
-    history.push({role:'agent',text:`调用失败：${error.message}`,error:true,retry:message,sources,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
+    userMessage.attachmentStatus = displayAttachments.length ? '发送失败' : '';
+    history.push({role:'agent',text:`调用失败：${error.message}`,error:true,retry:message,sources,pipeline:[{stage:'openclaw-agent',status:'failed',detail:error.message}],time:formatLocalizedTime(new Date().toISOString())});
+    finishAgentProgress(agentID,index,null,error.message);
   }
-  refreshAgentChat(index);
+  refreshAgentChat(index, {forceBottom:true});
 }
 
 function openAgentAllowlist(index) {
@@ -1857,48 +2677,115 @@ async function createNewsTodo(title) {
   catch(error){toast('待办暂不可生成',error.message,'warning');}
 }
 
-function configureModel() {
-  const data = state.openClawModels;
-  if (!data) {
-    toast('模型配置尚未就绪', '请等待 OpenClaw 模型信息读取完成。', 'warning');
-    return;
+function currentModelConfiguration() {
+  const model = document.getElementById('modelVersionSelect')?.value || state.modelDraftKey || '';
+  const apiKey = document.getElementById('modelAPIKey')?.value.trim() || '';
+  const endpointMode = document.getElementById('modelEndpointMode')?.value || modelEndpointModeFor(modelProvider(model));
+  const selectedModels = configuredModelKeys().filter(key=>key!==state.modelDraftOriginalKey);
+  if (model && !selectedModels.includes(model)) selectedModels.push(model);
+  const preferredDefault = state.modelDraftMode === 'edit' && state.modelDraftOriginalKey && currentDefaultModelKey() === state.modelDraftOriginalKey ? model : '';
+  const defaultModel = defaultModelForKeys(selectedModels, preferredDefault || model, preferredDefault === model);
+  return { model, defaultModel, apiKey, endpointMode, selectedModels };
+}
+
+function validateModelConfiguration({model}) {
+  if (!model) {
+    toast('无法保存', '请选择模型。', 'warning');
+    return false;
   }
-  const models = data.models || [];
-  const current = data.resolvedDefault || data.defaultModel || '';
-  const providers = [...new Set(['deepseek', ...(data.providers || []).map(item => item.provider)])];
-  const modelOptions = models.map(model => `<option value="${escapeAttr(model.key)}" ${model.key===current?'selected':''} ${model.missing||!model.available?'disabled':''}>${escapeHTML(model.name)} · ${escapeHTML(model.key)}${model.missing||!model.available?'（不可用）':''}</option>`).join('');
-  const configuredProviders=(data.providers||[]).filter(provider=>provider.configured).map(provider=>provider.provider);
-  const storedKey=state.showApiKey ? '已配置（OpenClaw 不提供明文读取）' : '••••••••••••';
-  openModal({title:'配置 OpenClaw 模型',eyebrow:'设置 / 真实配置',wide:true,body:`<div class="form-grid"><div class="form-field full"><label>默认模型 <span class="required">*</span></label><select class="select" id="modelID">${modelOptions}</select><small>下拉列表直接来自 OpenClaw <code>models list</code>；当前共有 ${models.length} 个模型，仅可选择 OpenClaw 标记为可用的模型。</small></div><div class="form-field"><label>凭据提供商</label><select class="select" id="modelProvider">${providers.map(provider=>`<option value="${escapeAttr(provider)}">${escapeHTML(provider)}${configuredProviders.includes(provider)?'（已配置）':''}</option>`).join('')}</select></div><div class="form-field"><label>已保存 API Key</label><div class="credential-field"><input class="input" readonly value="${escapeAttr(storedKey)}"><button class="icon-button" type="button" data-action="toggle-api-key" title="${state.showApiKey?'隐藏':'查看凭据状态'}">${icon(state.showApiKey?'eye-off':'eye')}</button></div></div><div class="form-field full"><label>更新 API Key</label><div class="credential-field"><input class="input" id="modelAPIKey" type="password" value="" autocomplete="new-password" placeholder="留空则保留现有凭据"><button class="icon-button" type="button" data-action="toggle-api-key-input" title="显示或隐藏本次输入">${icon('eye')}</button></div><small>可以查看本次输入的新 Key；已保存 Key 只显示配置状态。后端和 OpenClaw 不向页面返回凭据明文，避免本机页面、日志或接口泄露。</small></div><div class="form-field full"><label>OpenClaw 支持的模型</label><div class="data-wrap"><table class="data-table model-list-table"><thead><tr><th>模型</th><th>模型 ID</th><th>上下文</th><th>状态</th></tr></thead><tbody>${models.map(model=>`<tr><td>${escapeHTML(model.name)}</td><td>${escapeHTML(model.key)}</td><td>${Number(model.contextWindow||0).toLocaleString()}</td><td>${model.available&&!model.missing?badge('Active'):badge('Review')}</td></tr>`).join('')}</tbody></table></div></div></div>`,footer:`<button class="button ghost" data-action="close-modal">取消</button><button class="button primary" data-action="save-model-config">${icon('check')}保存到 OpenClaw</button>`});
+  return true;
 }
 
 async function saveModelConfiguration(button) {
-  const model = document.getElementById('modelID')?.value || '';
-  const provider = document.getElementById('modelProvider')?.value || '';
-  const apiKey = document.getElementById('modelAPIKey')?.value.trim() || '';
-  if (!model) {
-    toast('无法保存', '请选择可用模型。', 'warning');
-    return;
-  }
+  const configuration = currentModelConfiguration();
+  if (!validateModelConfiguration(configuration)) return;
   button.disabled = true;
   button.innerHTML = `${icon('loader-circle')}保存中`;
   applyIcons();
   try {
-    await apiFetch('/api/v1/settings/model', { method: 'PATCH', body: JSON.stringify({ provider, apiKey, model }) });
-    await loadOpenClawModels(true);
+    const saved = await apiFetch('/api/v1/settings/model', { method: 'PATCH', body: JSON.stringify(configuration) });
+    state.modelTestResult=null;
+    state.modelDraftMode='create';
+    state.modelDraftFamilyKey='';
+    state.modelDraftKey='';
+    state.modelDraftOriginalKey='';
     closeModal();
-    toast('OpenClaw 模型配置已更新', `${model} 已设为默认模型。`);
+    await loadOpenClawModels(true);
+    toast('OpenClaw 模型配置已保存', saved.message || `${configuration.model} 已保存。`, 'success');
   } catch (error) {
     button.disabled = false;
-    button.innerHTML = `${icon('check')}保存到 OpenClaw`;
+    button.innerHTML = `${icon('save')}保存`;
     applyIcons();
-    toast('模型配置更新失败', error.message, 'warning');
+    toast(state.modelDraftMode === 'edit' ? '模型配置更新失败' : '模型配置保存失败', error.message, 'warning');
   }
 }
 
-async function testModelConnection() {
-  try {const result=await apiFetch('/api/v1/settings/model/test',{method:'POST',body:'{}'});toast(result.ok?'模型配置可用':'模型配置异常',`OpenClaw RPC 检查耗时 ${result.durationMs} ms · ${result.version||'版本未知'}`,result.ok?'success':'warning');}
-  catch(error){toast('模型连接检查失败',error.message,'warning');}
+async function testCurrentModelConfiguration() {
+  const configuration = currentModelConfiguration();
+  if (!validateModelConfiguration(configuration)) return;
+  await testModelConnection(configuration);
+}
+
+function startNewModelConfiguration() {
+  openModelConfigurationForm('create', '');
+}
+
+function editModelConfiguration(model) {
+  openModelConfigurationForm('edit', model);
+}
+
+async function deleteModelConfiguration(model) {
+  const modelInfo = findModelByKey(model);
+  if (!window.confirm(`确认删除模型配置：${modelInfo?.name||model}？\n该操作只会从当前应用/OpenClaw 默认模型列表移除，不会回传或展示已保存 API Key。`)) return;
+  const selectedModels = configuredModelKeys().filter(key=>key!==model);
+  const defaultModel = defaultModelForKeys(selectedModels);
+  try {
+    await apiFetch('/api/v1/settings/model', { method:'PATCH', body: JSON.stringify({ model:'', defaultModel, apiKey:'', selectedModels }) });
+    if (state.modelDraftKey===model) {
+      state.modelDraftMode='create';
+      state.modelDraftFamilyKey='';
+      state.modelDraftKey='';
+      state.modelDraftOriginalKey='';
+    }
+    state.modelTestResult=null;
+    await loadOpenClawModels(true);
+    toast('模型配置已删除', modelInfo?.name||model, 'success');
+  } catch(error) {
+    toast('模型配置删除失败', error.message, 'warning');
+  }
+}
+
+async function testConfiguredModel(model) {
+  const selectedModels = configuredModelKeys();
+  const defaultModel = defaultModelForKeys(selectedModels, model);
+  await testModelConnection({ model, defaultModel, apiKey:'', endpointMode:modelEndpointModeFor(modelProvider(model)), selectedModels });
+}
+
+async function testModelConnection(configuration={}) {
+  if (state.modelTestLoading) return;
+  state.modelTestLoading = true;
+  state.testingModelKey = configuration.model || '';
+  state.modelTestResult = null;
+  renderPage();
+  try {
+    const result=await apiFetch('/api/v1/settings/model/test',{method:'POST',body:JSON.stringify(configuration)});
+    state.modelTestResult=result;
+    applyModelTestResultToState(result);
+    toast(result.ok?'模型真实调用通过':'模型真实调用未通过',result.message||'模型验证完成',result.ok?'success':'warning');
+  } catch(error) {
+    state.modelTestResult={ok:false,message:error.message,testedAt:new Date().toISOString(),durationMs:0,model:configuration.model||state.openClawModels?.resolvedDefault||state.openClawModels?.defaultModel||''};
+    applyModelTestResultToState(state.modelTestResult);
+    toast('模型验证请求失败',error.message,'warning');
+  } finally {
+    state.modelTestLoading=false;
+    state.testingModelKey='';
+    await loadOpenClawModels(true);
+    applyModelTestResultToState(state.modelTestResult);
+    if(state.page==='settings'&&state.settingsTab==='model'){
+      if (document.getElementById('modalBackdrop') && !document.getElementById('modalBackdrop').hidden) refreshModelConfigurationModal();
+      else renderPage();
+    }
+  }
 }
 
 function renderAgentManagerBody() {
@@ -1938,27 +2825,16 @@ async function syncOpenClawAgents(button) {
   }
 }
 
-function openPluginForm(id) {
-  const plugin=boundPlugins.find(item=>item.id===id);if(!plugin)return;
-  state.formContext={type:'plugin',id};
-  openModal({title:`${plugin.name}插件`,eyebrow:'设置 / 插件绑定',body:`<div class="form-grid"><div class="form-field full"><label style="display:flex;align-items:center;gap:8px"><input id="pluginEnabled" type="checkbox" ${plugin.enabled?'checked':''}> 启用插件绑定流程</label></div><div class="form-field full"><div class="model-warning"><span>${icon('info')} 当前只保存启用状态。插件凭据、推送内容、接收对象和同步范围尚待客户确认，启用后状态为 PendingBinding，不会显示为已绑定成功。</span></div></div></div>`,footer:formFooter('保存状态','save-plugin')});
-}
-
-async function savePlugin() {
-  const plugin=boundPlugins.find(item=>item.id===state.formContext?.id);if(!plugin)return;
-  try {const result=await apiFetch('/api/v1/plugins',{method:'PATCH',body:JSON.stringify({...plugin,enabled:Boolean(document.getElementById('pluginEnabled')?.checked)})});upsertRecord(boundPlugins,result.item);closeModal();renderPage();toast('插件状态已保存',result.todo,'warning');}
-  catch(error){toast('插件状态保存失败',error.message,'warning');}
-}
-
 function schedulerForm(id='') {
   const job=scheduledJobs.find(item=>item.id===id)||{};
   state.formContext={type:'job',id:job.id||''};
-  openModal({title:job.id?'编辑定时任务':'新增定时任务',eyebrow:'设置 / 定时任务',body:`<div class="form-grid">${inputField('任务名称',job.name||'',true,true,'text','jobName')}${selectField('任务类型',['recommendations','weekly_report','news','index','custom'],true,'jobKind',job.kind||'custom')}${inputField('执行频率 / Cron',job.schedule||'每天 08:00',true,false,'text','jobSchedule')}<div class="form-field full"><label style="display:flex;align-items:center;gap:8px"><input id="jobEnabled" type="checkbox" ${job.id?!job.enabled?'':'checked':'checked'}> 启用任务</label></div>${job.id&&!job.builtIn?`<div class="form-field full"><button type="button" class="button danger" data-action="delete-schedule" data-id="${escapeAttr(job.id)}">${icon('trash-2')}删除自定义任务</button></div>`:''}</div>`,footer:formFooter('保存任务','save-schedule')});
+  const agentOptions = (state.openClawAgents||[]).filter(agent=>agent.visibility!=='system').map(agent=>agent.id).concat(['sta100-coordinator','sta100-knowledge','market-analyzer']).filter((value,index,array)=>array.indexOf(value)===index);
+  openModal({title:job.id?'编辑定时任务':'新增定时任务',eyebrow:'设置 / 定时任务',body:`<div class="form-grid">${inputField('任务名称',job.name||'',true,true,'text','jobName')}${selectField('任务类型',['recommendations','weekly_report','news','index','custom'],true,'jobKind',job.kind||'custom')}${inputField('执行频率 / Cron',job.schedule||'每天 08:00',true,false,'text','jobSchedule')}${inputField('任务说明',job.description||'',true,true,'text','jobDescription')}${selectField('执行 Agent',agentOptions,true,'jobAgent',job.agentId||'sta100-coordinator')}<div class="form-field full"><label for="jobPrompt">执行 Prompt</label><textarea class="textarea" id="jobPrompt" maxlength="8000" rows="5" placeholder="描述任务每次实际需要执行的内容">${escapeHTML(job.prompt||'')}</textarea><small>Prompt 会作为任务定义保存；当前定时调度执行器仍在接入，未执行的任务不会伪装成已完成。</small></div><div class="form-field full"><label style="display:flex;align-items:center;gap:8px"><input id="jobEnabled" type="checkbox" ${job.id?!job.enabled?'':'checked':'checked'}> 启用任务</label></div>${job.id&&!job.builtIn?`<div class="form-field full"><button type="button" class="button danger" data-action="delete-schedule" data-id="${escapeAttr(job.id)}">${icon('trash-2')}删除自定义任务</button></div>`:''}</div>`,footer:formFooter('保存任务','save-schedule')});
 }
 
 async function saveSchedule() {
   const existing=scheduledJobs.find(item=>item.id===state.formContext?.id);
-  const payload={...(existing||{}),name:formText('jobName'),kind:formText('jobKind'),schedule:formText('jobSchedule'),enabled:Boolean(document.getElementById('jobEnabled')?.checked),status:existing?.status||'Ready'};
+  const payload={...(existing||{}),name:formText('jobName'),kind:formText('jobKind'),schedule:formText('jobSchedule'),description:formText('jobDescription'),agentId:formText('jobAgent'),prompt:formText('jobPrompt'),enabled:Boolean(document.getElementById('jobEnabled')?.checked),status:existing?.status||'Ready'};
   if(!payload.name||!payload.kind||!payload.schedule){toast('保存失败','任务名称、类型和执行频率不能为空。','warning');return;}
   try {const record=await apiFetch(existing?'/api/v1/jobs':'/api/v1/jobs',{method:existing?'PATCH':'POST',body:JSON.stringify(payload)});upsertRecord(scheduledJobs,record);closeModal();renderPage();toast(existing?'任务已更新':'任务已创建',record.name);}
   catch(error){toast('任务保存失败',error.message,'warning');}
@@ -2037,6 +2913,8 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('change', e => {
+  if(e.target.id==='modelFamilySelect'){updateModelFamilySelection();return;}
+  if(e.target.id==='modelVersionSelect'){updateModelSelection();return;}
   const quoteProduct=e.target.closest('[data-quote-line-field="productId"]');
   if(quoteProduct){const line=state.quoteDraftLines[Number(quoteProduct.dataset.index)];const product=productByID(quoteProduct.value);Object.assign(line,{productId:product.id,unitPrice:moneyNumber(product.price)});renderQuoteDraftLines();return;}
   const orderProduct=e.target.closest('[data-order-line-field="productId"]');
@@ -2108,16 +2986,24 @@ document.addEventListener('click', e => {
     'refresh-news':()=>void refreshNews(),
     'news-sources':openNewsSettings,
     'save-news-settings':()=>void saveNewsSettings(),
-    'configure-model':configureModel,
     'account-settings':openAccountSettings,
+    'model-draft-new':startNewModelConfiguration,
+    'edit-model-config':()=>editModelConfiguration(el.dataset.model),
+    'delete-model-config':()=>void deleteModelConfiguration(el.dataset.model),
+    'test-configured-model':()=>void testConfiguredModel(el.dataset.model),
+    'cancel-model-edit':closeModal,
     'save-model-config':()=>saveModelConfiguration(el),
+    'test-model-config':()=>void testCurrentModelConfiguration(),
+    'select-default-model':()=>void selectDefaultModel(el.dataset.model),
     'save-account-settings':()=>void saveAccountSettings(),
     'toggle-api-key-input':()=>{const input=document.getElementById('modelAPIKey');if(input){input.type=input.type==='password'?'text':'password';el.innerHTML=icon(input.type==='password'?'eye':'eye-off');applyIcons();}},
-    'test-model':()=>void testModelConnection(),
     'refresh-openclaw-models':async()=>{await loadOpenClawModels(true);toast('模型信息已刷新',state.openClawModels?.error||`当前默认模型：${state.openClawModels?.resolvedDefault||'未配置'}`,state.openClawModels?.error?'warning':'success');},
+    'refresh-openclaw-channels':async()=>{await loadOpenClawChannels(true);toast('通道清单已刷新',`当前支持 ${state.openClawChannels?.length||0} 个 OpenClaw 通道。`);},
     'refresh-openclaw-system':async()=>{await Promise.all([loadOpenClawStatus(true),loadOpenClawAgents(true),loadSystemHealth(true)]);toast('系统状态已刷新',state.systemHealth?.status==='ok'?'Go 服务、SQLite 与 OpenClaw 状态正常。':'部分组件需要检查。',state.systemHealth?.status==='ok'?'success':'warning');},
-    'bind-plugin':()=>openPluginForm(el.dataset.id),'save-plugin':()=>void savePlugin(),
-    'new-schedule':()=>schedulerForm(),'edit-schedule':()=>schedulerForm(el.dataset.id),'save-schedule':()=>void saveSchedule(),'delete-schedule':()=>void deleteSchedule(el.dataset.id),'choose-backup':()=>toast('备份目录待部署确认','浏览器不能直接授权后端写入任意外置路径；需确定盒子挂载点和目录白名单。','warning'),
+	    'open-channel-binding':()=>openChannelBinding(el.dataset.channel),
+	    'channel-status':()=>document.getElementById('channelStatusBox')?void refreshChannelStatus(el.dataset.channel):openChannelBinding(el.dataset.channel),
+	    'save-channel-binding':()=>void saveChannelBinding(el.dataset.channel),
+	    'new-schedule':()=>schedulerForm(),'edit-schedule':()=>schedulerForm(el.dataset.id),'save-schedule':()=>void saveSchedule(),'delete-schedule':()=>void deleteSchedule(el.dataset.id),'choose-backup':()=>toast('备份目录待部署确认','浏览器不能直接授权后端写入任意外置路径；需确定盒子挂载点和目录白名单。','warning'),
     'offline-upgrade':offlineUpgradeModal,'choose-upgrade-package':()=>document.getElementById('upgradeFileInput')?.click(),'import-upgrade-package':()=>void importOfflineUpgrade(),
     'upgrade-history':()=>void showUpgradeHistory(),
     'relation-select':()=>{const input=document.getElementById(el.dataset.target);if(input){input.value=el.dataset.value;const options=document.getElementById(`${el.dataset.target}Options`);if(options)options.innerHTML='';if(el.dataset.target==='orderQuote')syncOrderFromQuote(el.dataset.value);}},
@@ -2126,10 +3012,12 @@ document.addEventListener('click', e => {
     'remove-quote-line':()=>{if(state.quoteDraftLines.length===1){toast('至少保留一条产品明细','正式报价单需要至少一个产品。','warning');return;}state.quoteDraftLines.splice(Number(el.dataset.index),1);renderQuoteDraftLines();},
     'add-order-line':()=>{const product=products.find(item=>item.status==='Active')||products[0];state.orderDraftLines.push({productId:product.id,quantity:1,unitPrice:moneyNumber(product.price)});renderOrderDraftLines();},
     'remove-order-line':()=>{if(state.orderDraftLines.length===1){toast('至少保留一条产品明细','订单需要至少一个产品。','warning');return;}state.orderDraftLines.splice(Number(el.dataset.index),1);renderOrderDraftLines();},
-    'toggle-api-key':()=>{state.showApiKey=!state.showApiKey;configureModel();},
     'template-default':()=>void templateAction('default'),'template-edit':()=>void templateAction('edit'),
     'quote-date-filter':()=>dateFilterForm('quote'),'order-date-filter':()=>dateFilterForm('order'),'apply-date-filter':()=>applyDateFilter(el.dataset.module,el.dataset.clear==='true'),
     'send-chat':()=>void sendAgentMessage(Number(el.dataset.agent)),
+    'choose-chat-image':()=>document.getElementById('chatImageInput')?.click(),
+    'choose-chat-file':()=>document.getElementById('chatFileInput')?.click(),
+    'remove-chat-attachment':()=>removeChatAttachment(el.dataset.agent,el.dataset.index),
     'retry-chat':()=>void sendAgentMessage(Number(el.dataset.agent),el.dataset.message||''),
     'chat-quick-prompt':()=>void sendAgentMessage(Number(el.dataset.agent),el.dataset.prompt||''),
     'agent-allowlist':()=>openAgentAllowlist(Number(el.dataset.agent)),

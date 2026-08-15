@@ -6,10 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -435,5 +438,128 @@ func TestDesignTODOAliasesDoNotFallThroughTo404(t *testing.T) {
 		if recorder.Code == http.StatusNotFound {
 			t.Errorf("%s fell through to 404: %s", path, recorder.Body.String())
 		}
+	}
+}
+
+func TestModelConnectionTestUsesRealProviderProbe(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OPENCLAW_STATE_DIR", filepath.Join(dir, "state"))
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer valid-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"invalid api key","type":"authentication_error"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"pong"}}]}`))
+	}))
+	defer provider.Close()
+	configPath := filepath.Join(dir, "openclaw.json")
+	config := `{"agents":{"defaults":{"model":{"primary":"deepseek/deepseek-chat"},"models":{"deepseek/deepseek-chat":{}}},"list":[{"id":"sta100-coordinator"}]},"models":{"providers":{"deepseek":{"baseUrl":%q,"models":[{"id":"deepseek-chat","name":"DeepSeek Chat"}]}}},"auth":{"profiles":{}}}`
+	if err := os.WriteFile(configPath, []byte(fmt.Sprintf(config, provider.URL)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(dir, "openclaw")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2" in
+  "gateway status") printf '%s' '{"cli":{"version":"test"},"service":{"loaded":true,"runtime":{"status":"running"},"configAudit":{"ok":true}},"gateway":{"version":"test"},"rpc":{"ok":true,"version":"test"}}' ;;
+  "models status") printf '%s' '{"defaultModel":"demo/working","resolvedDefault":"demo/working","auth":{"missingProvidersInUse":[],"providers":[{"provider":"demo","profiles":{"count":1,"apiKey":1,"oauth":0,"token":0}}]}}' ;;
+  "models list") printf '%s' '{"models":[{"key":"demo/working","name":"Working","available":true,"missing":false}]}' ;;
+  *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	api, _ := newTestBusinessAPI(t)
+	api.openClaw = &openClawService{service: orchestrator.New(orchestrator.Config{BinaryPath: scriptPath, ConfigPath: configPath})}
+	recorder := businessRequest(t, api, http.MethodPost, "/api/v1/settings/model/test", map[string]any{"model": "deepseek/deepseek-chat", "apiKey": "valid-key"})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	result := decodeResponse[struct {
+		OK              bool   `json:"ok"`
+		GatewayOK       bool   `json:"gatewayOK"`
+		ConfigurationOK bool   `json:"configurationOK"`
+		GenerationOK    bool   `json:"generationOK"`
+		Model           string `json:"model"`
+	}](t, recorder)
+	if !result.OK || !result.ConfigurationOK || !result.GenerationOK || result.Model != "deepseek/deepseek-chat" {
+		t.Fatalf("unexpected model test response: %+v\n%s", result, recorder.Body.String())
+	}
+	recorder = businessRequest(t, api, http.MethodPost, "/api/v1/settings/model/test", map[string]any{"model": "deepseek/deepseek-chat", "apiKey": "invalid-key"})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	failed := decodeResponse[struct {
+		OK           bool   `json:"ok"`
+		GenerationOK bool   `json:"generationOK"`
+		Message      string `json:"message"`
+	}](t, recorder)
+	if failed.OK || failed.GenerationOK || !strings.Contains(failed.Message, "API Key") {
+		t.Fatalf("invalid key should fail provider probe: %+v\n%s", failed, recorder.Body.String())
+	}
+}
+
+func TestModelConfigurationSupportsSelectedVersionsAndSingleDefault(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"agents":{"defaults":{"model":{"primary":"demo/working"},"models":{"demo/working":{},"demo/fast":{}}}},"models":{"providers":{"demo":{"models":[{"id":"working"},{"id":"fast"}]}}},"auth":{"profiles":{"demo:default":{"provider":"demo","mode":"api_key"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := orchestrator.New(orchestrator.Config{ConfigPath: configPath})
+	if err := service.SetConfiguredModelSelection("demo/fast", []string{"demo/working", "demo/fast"}); err != nil {
+		t.Fatalf("set selected models: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Agents struct {
+			Defaults struct {
+				Model  map[string]string `json:"model"`
+				Models map[string]any    `json:"models"`
+			} `json:"defaults"`
+		} `json:"agents"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Agents.Defaults.Model["primary"] != "demo/fast" {
+		t.Fatalf("default model = %q", config.Agents.Defaults.Model["primary"])
+	}
+	if len(config.Agents.Defaults.Models) != 2 {
+		t.Fatalf("selected model count = %d", len(config.Agents.Defaults.Models))
+	}
+}
+
+func TestModelTestFailureMessageClassifiesProviderErrors(t *testing.T) {
+	if got := modelTestFailureMessage(errors.New("provider: insufficient balance"), "fallback"); !strings.Contains(got, "余额") {
+		t.Fatalf("balance error = %q", got)
+	}
+	if got := modelTestFailureMessage(errors.New("401 invalid api key"), "fallback"); !strings.Contains(got, "API Key") {
+		t.Fatalf("authentication error = %q", got)
+	}
+	if got := modelTestFailureMessage(errors.New("The selected model was not found by the provider"), "fallback"); !strings.Contains(got, "无权使用") {
+		t.Fatalf("model missing error = %q", got)
+	}
+}
+
+func TestModelTestStateRequiresRealGeneration(t *testing.T) {
+	legacy := modelTestState{OK: true, Message: "API Key 写入和模型配置检查通过"}
+	if modelTestStatePassed(legacy) {
+		t.Fatal("legacy configuration-only model test must not enable agent chat")
+	}
+	if got := modelTestStateMessage(legacy); !strings.Contains(got, "真实模型调用验证") {
+		t.Fatalf("legacy message = %q", got)
+	}
+	current := modelTestState{OK: true, Message: modelRealProbeSuccessMessage}
+	if !modelTestStatePassed(current) {
+		t.Fatal("real provider probe success should enable agent chat")
 	}
 }

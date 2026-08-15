@@ -3,15 +3,22 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
+	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 var (
@@ -41,12 +48,16 @@ type Config struct {
 	BinaryPath string
 	ConfigPath string
 	Manifest   string
+	PluginDir  string
 }
 
 type Service struct {
 	bin          string
 	configPath   string
 	manifestPath string
+	pluginDir    string
+	qrMu         sync.Mutex
+	qrSessions   map[string]*feishuQRSession
 }
 
 type AuditIssue struct {
@@ -76,31 +87,117 @@ type CredentialTypes struct {
 }
 
 type ProviderStatus struct {
-	Provider        string          `json:"provider"`
-	Configured      bool            `json:"configured"`
-	ProfileCount    int             `json:"profileCount"`
-	CredentialTypes CredentialTypes `json:"credentialTypes"`
+	Provider         string          `json:"provider"`
+	Configured       bool            `json:"configured"`
+	APIKeyConfigured bool            `json:"apiKeyConfigured"`
+	APIKeySupported  bool            `json:"apiKeySupported"`
+	ProfileCount     int             `json:"profileCount"`
+	CredentialTypes  CredentialTypes `json:"credentialTypes"`
 }
 
 type Model struct {
-	Key           string   `json:"key"`
-	Name          string   `json:"name"`
-	Input         string   `json:"input"`
-	ContextWindow int      `json:"contextWindow"`
-	Local         bool     `json:"local"`
-	Available     bool     `json:"available"`
-	Tags          []string `json:"tags"`
-	Missing       bool     `json:"missing"`
+	Key             string   `json:"key"`
+	Name            string   `json:"name"`
+	Input           string   `json:"input"`
+	ContextWindow   int      `json:"contextWindow"`
+	Local           bool     `json:"local"`
+	Available       bool     `json:"available"`
+	Source          string   `json:"source,omitempty"`
+	Tags            []string `json:"tags"`
+	Missing         bool     `json:"missing"`
+	LastTestStatus  string   `json:"lastTestStatus,omitempty"`
+	LastTestMessage string   `json:"lastTestMessage,omitempty"`
+	LastTestAt      string   `json:"lastTestAt,omitempty"`
 }
 
 type Models struct {
-	DefaultModel     string           `json:"defaultModel"`
-	ResolvedDefault  string           `json:"resolvedDefault"`
-	Fallbacks        []string         `json:"fallbacks"`
-	Configured       bool             `json:"configured"`
-	MissingProviders []string         `json:"missingProviders"`
-	Providers        []ProviderStatus `json:"providers"`
-	Models           []Model          `json:"models"`
+	CatalogVersion   string            `json:"catalogVersion"`
+	DefaultModel     string            `json:"defaultModel"`
+	ResolvedDefault  string            `json:"resolvedDefault"`
+	Fallbacks        []string          `json:"fallbacks"`
+	Configured       bool              `json:"configured"`
+	MissingProviders []string          `json:"missingProviders"`
+	Providers        []ProviderStatus  `json:"providers"`
+	Models           []Model           `json:"models"`
+	ConfiguredModels []Model           `json:"configuredModels,omitempty"`
+	CatalogModels    []Model           `json:"catalogModels,omitempty"`
+	ProviderBaseURLs map[string]string `json:"providerBaseUrls,omitempty"`
+}
+
+func (m *Models) LimitToConfiguredSelection() {
+	if len(m.CatalogModels) == 0 {
+		m.CatalogModels = append([]Model(nil), m.Models...)
+	}
+	selected := map[string]bool{}
+	if strings.TrimSpace(m.ResolvedDefault) != "" {
+		selected[strings.TrimSpace(m.ResolvedDefault)] = true
+	}
+	if strings.TrimSpace(m.DefaultModel) != "" {
+		selected[strings.TrimSpace(m.DefaultModel)] = true
+	}
+	if len(selected) == 0 && len(m.ConfiguredModels) > 0 {
+		for _, model := range m.ConfiguredModels {
+			selected[model.Key] = true
+		}
+	}
+	if len(selected) == 0 {
+		m.ConfiguredModels = nil
+		return
+	}
+	filtered := make([]Model, 0, len(selected))
+	seen := map[string]bool{}
+	for _, model := range m.Models {
+		if selected[model.Key] && !seen[model.Key] {
+			filtered = append(filtered, model)
+			seen[model.Key] = true
+		}
+	}
+	m.ConfiguredModels = filtered
+}
+
+type Plugin struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Version      string   `json:"version,omitempty"`
+	Enabled      bool     `json:"enabled"`
+	Status       string   `json:"status"`
+	Source       string   `json:"source"`
+	Providers    []string `json:"providers,omitempty"`
+	Channels     []string `json:"channels,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Configurable bool     `json:"configurable"`
+}
+
+type Channel struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Installed    bool   `json:"installed"`
+	Enabled      bool   `json:"enabled"`
+	Configured   bool   `json:"configured"`
+	Running      bool   `json:"running"`
+	LastError    string `json:"lastError,omitempty"`
+	Origin       string `json:"origin"`
+	AccountCount int    `json:"accountCount"`
+	Status       string `json:"status"`
+}
+
+type ChannelAccountRequest struct {
+	Channel  string `json:"channel"`
+	Account  string `json:"account,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Token    string `json:"token,omitempty"`
+	Secret   string `json:"secret,omitempty"`
+	URL      string `json:"url,omitempty"`
+	BaseURL  string `json:"baseUrl,omitempty"`
+	HTTPURL  string `json:"httpUrl,omitempty"`
+	CLIPath  string `json:"cliPath,omitempty"`
+	DBPath   string `json:"dbPath,omitempty"`
+	Service  string `json:"service,omitempty"`
+	Region   string `json:"region,omitempty"`
+	Password string `json:"password,omitempty"`
+	UseEnv   bool   `json:"useEnv,omitempty"`
 }
 
 type Agent struct {
@@ -116,11 +213,20 @@ type Agent struct {
 }
 
 type AgentMessageInput struct {
-	AgentID    string
-	Message    string
-	SessionKey string
-	Sources    []string
-	Allowlist  []string
+	AgentID     string
+	Model       string
+	Message     string
+	SessionKey  string
+	Sources     []string
+	Allowlist   []string
+	Attachments []MessageAttachment
+}
+
+type MessageAttachment struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Mime string `json:"mime,omitempty"`
+	Size int64  `json:"size,omitempty"`
 }
 
 type AgentMessageResult struct {
@@ -130,6 +236,18 @@ type AgentMessageResult struct {
 	RunID      string     `json:"runId,omitempty"`
 	Status     string     `json:"status"`
 	Usage      TokenUsage `json:"usage"`
+}
+
+// SessionHistoryMessage is the user-facing subset of an OpenClaw session.
+// Internal prompts, tool calls and thinking events are intentionally omitted.
+type SessionHistoryMessage struct {
+	Role      string `json:"role"`
+	Text      string `json:"text"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Provider  string `json:"provider,omitempty"`
+	RunID     string `json:"runId,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 type TokenUsage struct {
@@ -160,10 +278,16 @@ func New(config Config) *Service {
 	config.BinaryPath = strings.TrimSpace(config.BinaryPath)
 	config.ConfigPath = strings.TrimSpace(config.ConfigPath)
 	config.Manifest = strings.TrimSpace(config.Manifest)
+	config.PluginDir = strings.TrimSpace(config.PluginDir)
+	if config.PluginDir == "" && config.BinaryPath != "" {
+		config.PluginDir = filepath.Clean(filepath.Join(filepath.Dir(config.BinaryPath), "..", "..", "openclaw", "app", "node_modules", "openclaw", "dist", "extensions"))
+	}
 	return &Service{
 		bin:          config.BinaryPath,
 		configPath:   config.ConfigPath,
 		manifestPath: config.Manifest,
+		pluginDir:    config.PluginDir,
+		qrSessions:   make(map[string]*feishuQRSession),
 	}
 }
 
@@ -192,7 +316,11 @@ func Discover(manifestPath string) *Service {
 	if envManifest := strings.TrimSpace(os.Getenv("OPENCLAW_AGENT_MANIFEST")); envManifest != "" {
 		manifestPath = envManifest
 	}
-	return New(Config{BinaryPath: bin, ConfigPath: configPath, Manifest: manifestPath})
+	pluginDir := ""
+	if bin != "" {
+		pluginDir = filepath.Clean(filepath.Join(filepath.Dir(bin), "..", "..", "openclaw", "app", "node_modules", "openclaw", "dist", "extensions"))
+	}
+	return New(Config{BinaryPath: bin, ConfigPath: configPath, Manifest: manifestPath, PluginDir: pluginDir})
 }
 
 func (s *Service) BinaryPath() string { return s.bin }
@@ -251,26 +379,15 @@ func (s *Service) Status(ctx context.Context) (GatewayStatus, error) {
 }
 
 func (s *Service) Models(ctx context.Context) (Models, error) {
-	type commandResult struct {
-		stdout []byte
-		err    error
-	}
-	statusChannel := make(chan commandResult, 1)
-	listChannel := make(chan commandResult, 1)
-	go func() {
-		out, err := s.run(ctx, nil, "models", "status", "--json")
-		statusChannel <- commandResult{stdout: out, err: err}
-	}()
-	go func() {
-		out, err := s.run(ctx, nil, "models", "list", "--json")
-		listChannel <- commandResult{stdout: out, err: err}
-	}()
-	statusResult, listResult := <-statusChannel, <-listChannel
-	if statusResult.err != nil {
-		return Models{}, statusResult.err
-	}
-	if listResult.err != nil {
-		return Models{}, listResult.err
+	local, localOK := s.modelsFromConfig()
+	statusContext, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	statusOutput, statusErr := s.run(statusContext, nil, "models", "status", "--json")
+	if statusErr != nil {
+		if localOK {
+			return local, nil
+		}
+		return Models{}, statusErr
 	}
 	var status struct {
 		DefaultModel    string   `json:"defaultModel"`
@@ -289,26 +406,71 @@ func (s *Service) Models(ctx context.Context) (Models, error) {
 			} `json:"providers"`
 		} `json:"auth"`
 	}
-	var list struct {
-		Models []Model `json:"models"`
-	}
-	if json.Unmarshal(statusResult.stdout, &status) != nil || json.Unmarshal(listResult.stdout, &list) != nil {
+	if json.Unmarshal(statusOutput, &status) != nil {
 		return Models{}, ErrInvalidResponse
 	}
-	providers := make([]ProviderStatus, 0, len(status.Auth.Providers))
+	list := struct {
+		Models []Model `json:"models"`
+	}{Models: fixedModels()}
+	if localOK {
+		known := make(map[string]bool, len(list.Models))
+		for _, model := range list.Models {
+			known[model.Key] = true
+		}
+		for _, model := range local.Models {
+			if !known[model.Key] {
+				list.Models = append(list.Models, model)
+				known[model.Key] = true
+			}
+		}
+	}
+	providerStatuses := make(map[string]ProviderStatus, len(status.Auth.Providers))
 	for _, provider := range status.Auth.Providers {
-		providers = append(providers, ProviderStatus{
-			Provider:     provider.Provider,
-			Configured:   provider.Profiles.Count > 0,
-			ProfileCount: provider.Profiles.Count,
+		providerStatuses[provider.Provider] = ProviderStatus{
+			Provider:         provider.Provider,
+			Configured:       provider.Profiles.Count > 0,
+			APIKeyConfigured: provider.Profiles.APIKey > 0,
+			APIKeySupported:  fixedAPIKeyProvider(provider.Provider),
+			ProfileCount:     provider.Profiles.Count,
 			CredentialTypes: CredentialTypes{
 				APIKey: provider.Profiles.APIKey,
 				OAuth:  provider.Profiles.OAuth,
 				Token:  provider.Profiles.Token,
 			},
-		})
+		}
 	}
-	return Models{
+	for _, model := range list.Models {
+		provider, _, ok := strings.Cut(model.Key, "/")
+		if ok && providerPattern.MatchString(provider) {
+			if _, exists := providerStatuses[provider]; !exists {
+				providerStatuses[provider] = ProviderStatus{Provider: provider, APIKeySupported: supportsAPIKeyProvider(provider)}
+			}
+		}
+	}
+	for index := range list.Models {
+		provider, _, _ := strings.Cut(list.Models[index].Key, "/")
+		configured := providerStatuses[provider].Configured
+		if !configured && localOK {
+			for _, localModel := range local.Models {
+				if localModel.Key == list.Models[index].Key {
+					configured = localModel.Available
+					break
+				}
+			}
+		}
+		list.Models[index].Available = configured
+		if list.Models[index].Source == "" {
+			list.Models[index].Source = "fixed_catalog"
+		}
+		list.Models[index].Missing = !configured
+	}
+	providers := make([]ProviderStatus, 0, len(providerStatuses))
+	for _, provider := range providerStatuses {
+		providers = append(providers, provider)
+	}
+	sort.Slice(providers, func(i, j int) bool { return providers[i].Provider < providers[j].Provider })
+	result := Models{
+		CatalogVersion:   ModelCatalogVersion,
 		DefaultModel:     status.DefaultModel,
 		ResolvedDefault:  status.ResolvedDefault,
 		Fallbacks:        status.Fallbacks,
@@ -316,7 +478,209 @@ func (s *Service) Models(ctx context.Context) (Models, error) {
 		MissingProviders: status.Auth.MissingProvidersInUse,
 		Providers:        providers,
 		Models:           list.Models,
-	}, nil
+		CatalogModels:    append([]Model(nil), list.Models...),
+	}
+	if localOK {
+		result.ProviderBaseURLs = local.ProviderBaseURLs
+		if result.DefaultModel == "" {
+			result.DefaultModel = local.DefaultModel
+		}
+		if result.ResolvedDefault == "" {
+			result.ResolvedDefault = local.ResolvedDefault
+		}
+		if local.Configured {
+			result.Configured = true
+		}
+		selected := map[string]bool{}
+		if result.ResolvedDefault != "" {
+			selected[result.ResolvedDefault] = true
+		}
+		if result.DefaultModel != "" {
+			selected[result.DefaultModel] = true
+		}
+		for _, model := range local.Models {
+			selected[model.Key] = true
+		}
+		filtered := make([]Model, 0, len(selected))
+		for _, model := range result.CatalogModels {
+			if selected[model.Key] {
+				filtered = append(filtered, model)
+			}
+		}
+		result.Models = filtered
+	} else {
+		result.LimitToConfiguredSelection()
+	}
+	return result, nil
+}
+
+func (s *Service) ModelSnapshot() Models {
+	if local, ok := s.modelsFromConfig(); ok {
+		return local
+	}
+	models := fixedModels()
+	providers := make([]ProviderStatus, 0)
+	seen := map[string]bool{}
+	for _, model := range models {
+		provider, _, _ := strings.Cut(model.Key, "/")
+		if seen[provider] {
+			continue
+		}
+		seen[provider] = true
+		providers = append(providers, ProviderStatus{Provider: provider, APIKeySupported: fixedAPIKeyProvider(provider)})
+	}
+	sort.Slice(providers, func(i, j int) bool { return providers[i].Provider < providers[j].Provider })
+	return Models{
+		CatalogVersion: ModelCatalogVersion,
+		Providers:      providers,
+		Models:         models,
+	}
+}
+
+func (s *Service) modelsFromConfig() (Models, bool) {
+	if s.configPath == "" {
+		return Models{}, false
+	}
+	contents, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return Models{}, false
+	}
+	var config struct {
+		Agents struct {
+			Defaults struct {
+				Model  json.RawMessage        `json:"model"`
+				Models map[string]interface{} `json:"models"`
+			} `json:"defaults"`
+		} `json:"agents"`
+		Models struct {
+			Providers map[string]struct {
+				BaseURL string `json:"baseUrl"`
+				Models  []struct {
+					ID            string   `json:"id"`
+					Name          string   `json:"name"`
+					Input         []string `json:"input"`
+					ContextWindow int      `json:"contextWindow"`
+				} `json:"models"`
+			} `json:"providers"`
+		} `json:"models"`
+		Auth struct {
+			Profiles map[string]struct {
+				Provider string `json:"provider"`
+				Mode     string `json:"mode"`
+			} `json:"profiles"`
+		} `json:"auth"`
+	}
+	if err := json.Unmarshal(contents, &config); err != nil {
+		return Models{}, false
+	}
+	models := fixedModels()
+	known := make(map[string]bool, len(models))
+	for _, model := range models {
+		known[model.Key] = true
+	}
+	providerConfigured := map[string]ProviderStatus{}
+	providerBaseURLs := map[string]string{}
+	for _, model := range models {
+		provider, _, _ := strings.Cut(model.Key, "/")
+		if _, exists := providerConfigured[provider]; !exists {
+			providerConfigured[provider] = ProviderStatus{Provider: provider, APIKeySupported: supportsAPIKeyProvider(provider)}
+		}
+	}
+	for provider, definition := range config.Models.Providers {
+		if baseURL := strings.TrimSpace(definition.BaseURL); baseURL != "" {
+			providerBaseURLs[provider] = baseURL
+		}
+		for _, item := range definition.Models {
+			key := provider + "/" + strings.TrimSpace(item.ID)
+			if item.ID == "" || known[key] {
+				continue
+			}
+			input := strings.Join(item.Input, "+")
+			if input == "" {
+				input = "text"
+			}
+			models = append(models, Model{Key: key, Name: firstNonEmpty(item.Name, item.ID), Input: input, ContextWindow: item.ContextWindow, Source: "configured", Available: true})
+			known[key] = true
+		}
+	}
+	for profileID, profile := range config.Auth.Profiles {
+		provider := strings.TrimSpace(profile.Provider)
+		if provider == "" {
+			provider = strings.SplitN(profileID, ":", 2)[0]
+		}
+		if provider == "" {
+			continue
+		}
+		status := providerConfigured[provider]
+		status.Provider = provider
+		status.Configured = true
+		if strings.EqualFold(profile.Mode, "api_key") || profile.Mode == "" {
+			status.APIKeyConfigured = true
+			status.CredentialTypes.APIKey++
+		}
+		status.ProfileCount++
+		status.APIKeySupported = supportsAPIKeyProvider(provider)
+		providerConfigured[provider] = status
+	}
+	for index := range models {
+		provider, _, _ := strings.Cut(models[index].Key, "/")
+		status := providerConfigured[provider]
+		models[index].Available = status.Configured
+		models[index].Missing = !models[index].Available
+		if models[index].Source == "" {
+			models[index].Source = "fixed_catalog"
+		}
+	}
+	providers := make([]ProviderStatus, 0, len(providerConfigured))
+	for _, status := range providerConfigured {
+		providers = append(providers, status)
+	}
+	sort.Slice(providers, func(i, j int) bool { return providers[i].Provider < providers[j].Provider })
+	defaultModel := parseModelReference(config.Agents.Defaults.Model)
+	if defaultModel == "" {
+		for model := range config.Agents.Defaults.Models {
+			defaultModel = model
+			break
+		}
+	}
+	selectedModels := map[string]bool{}
+	if defaultModel != "" {
+		selectedModels[defaultModel] = true
+	}
+	for model := range config.Agents.Defaults.Models {
+		if strings.TrimSpace(model) != "" {
+			selectedModels[strings.TrimSpace(model)] = true
+		}
+	}
+	configuredModels := make([]Model, 0, len(selectedModels))
+	for _, model := range models {
+		if selectedModels[model.Key] {
+			configuredModels = append(configuredModels, model)
+		}
+	}
+	configured := false
+	for _, provider := range providerConfigured {
+		if provider.Configured {
+			configured = true
+			break
+		}
+	}
+	return Models{
+		CatalogVersion:   ModelCatalogVersion,
+		DefaultModel:     defaultModel,
+		ResolvedDefault:  defaultModel,
+		Configured:       configured,
+		Providers:        providers,
+		Models:           append([]Model(nil), models...),
+		ConfiguredModels: configuredModels,
+		CatalogModels:    append([]Model(nil), models...),
+		ProviderBaseURLs: providerBaseURLs,
+	}, true
+}
+
+func supportsAPIKeyProvider(provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	return fixedAPIKeyProvider(provider)
 }
 
 func (s *Service) SetDefaultModel(ctx context.Context, modelID string) error {
@@ -324,17 +688,180 @@ func (s *Service) SetDefaultModel(ctx context.Context, modelID string) error {
 	if !modelIDPattern.MatchString(modelID) {
 		return ErrInvalidModel
 	}
-	models, err := s.Models(ctx)
+	if !s.modelAvailable(ctx, modelID) {
+		return ErrModelUnavailable
+	}
+	_, err := s.run(ctx, nil, "models", "set", modelID)
+	return err
+}
+
+func (s *Service) SetConfiguredDefaultModel(modelID string) error {
+	modelID = strings.TrimSpace(modelID)
+	if !modelIDPattern.MatchString(modelID) {
+		return ErrInvalidModel
+	}
+	if !s.configuredModelAvailable(modelID) {
+		return ErrModelUnavailable
+	}
+	return s.applyDefaultModelConfig(modelID)
+}
+
+func (s *Service) SetConfiguredModelSelection(defaultModel string, selectedModels []string) error {
+	defaultModel = strings.TrimSpace(defaultModel)
+	if !modelIDPattern.MatchString(defaultModel) {
+		return ErrInvalidModel
+	}
+	seen := map[string]bool{}
+	models := make([]string, 0, len(selectedModels)+1)
+	for _, modelID := range append([]string{defaultModel}, selectedModels...) {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" || seen[modelID] {
+			continue
+		}
+		if !modelIDPattern.MatchString(modelID) {
+			return ErrInvalidModel
+		}
+		if !s.configuredModelAvailable(modelID) {
+			return ErrModelUnavailable
+		}
+		seen[modelID] = true
+		models = append(models, modelID)
+	}
+	if len(models) == 0 {
+		return ErrInvalidModel
+	}
+	return s.applyModelSelectionConfig(defaultModel, models)
+}
+
+func (s *Service) ClearConfiguredModelSelection() error {
+	if s.configPath == "" {
+		return ErrUnavailable
+	}
+	raw, err := os.ReadFile(s.configPath)
 	if err != nil {
 		return err
 	}
-	for _, model := range models.Models {
-		if model.Key == modelID && model.Available && !model.Missing {
-			_, err = s.run(ctx, nil, "models", "set", modelID)
-			return err
+	var config map[string]any
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		config = map[string]any{}
+	} else if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("%w: openclaw config: %v", ErrInvalidResponse, err)
+	}
+	agents := ensureObject(config, "agents")
+	defaults := ensureObject(agents, "defaults")
+	delete(defaults, "model")
+	defaults["models"] = map[string]any{}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(s.configPath, append(data, '\n'), 0o600)
+}
+
+func (s *Service) SetProviderBaseURL(provider, baseURL string) error {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	baseURL = strings.TrimSpace(baseURL)
+	if !providerPattern.MatchString(provider) {
+		return ErrInvalidProvider
+	}
+	if baseURL != "" {
+		parsed, err := url.Parse(baseURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			return ErrInvalidResponse
 		}
 	}
-	return ErrModelUnavailable
+	return s.applyProviderBaseURLConfig(provider, baseURL)
+}
+
+func (s *Service) modelAvailable(ctx context.Context, modelID string) bool {
+	if provider, _, ok := strings.Cut(modelID, "/"); ok && s.providerConfigured(provider) {
+		for _, model := range fixedModelCatalog {
+			if model.Key == modelID {
+				return true
+			}
+		}
+	}
+	models, err := s.Models(ctx)
+	if err == nil {
+		for _, model := range append(append([]Model(nil), models.Models...), models.CatalogModels...) {
+			if model.Key == modelID {
+				return model.Available
+			}
+		}
+	}
+	return s.configuredModel(modelID)
+}
+
+func (s *Service) configuredModelAvailable(modelID string) bool {
+	_, _, ok := strings.Cut(modelID, "/")
+	if !ok {
+		return false
+	}
+	for _, model := range fixedModelCatalog {
+		if model.Key == modelID {
+			return true
+		}
+	}
+	return s.configuredModel(modelID)
+}
+
+func (s *Service) providerConfigured(provider string) bool {
+	if s.configPath == "" {
+		return false
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return false
+	}
+	var config struct {
+		Auth struct {
+			Profiles map[string]struct {
+				Provider string `json:"provider"`
+			} `json:"profiles"`
+		} `json:"auth"`
+	}
+	if json.Unmarshal(raw, &config) != nil {
+		return false
+	}
+	for profileID, profile := range config.Auth.Profiles {
+		value := strings.TrimSpace(profile.Provider)
+		if value == "" {
+			value = strings.SplitN(profileID, ":", 2)[0]
+		}
+		if value == provider {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) configuredModel(modelID string) bool {
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return false
+	}
+	var config struct {
+		Models struct {
+			Providers map[string]struct {
+				Models []struct {
+					ID string `json:"id"`
+				} `json:"models"`
+			} `json:"providers"`
+		} `json:"models"`
+	}
+	if json.Unmarshal(raw, &config) != nil {
+		return false
+	}
+	provider, model, ok := strings.Cut(modelID, "/")
+	if !ok {
+		return false
+	}
+	for _, entry := range config.Models.Providers[provider].Models {
+		if entry.ID == model {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) SaveAPIKey(ctx context.Context, provider, apiKey string) (string, error) {
@@ -343,15 +870,440 @@ func (s *Service) SaveAPIKey(ctx context.Context, provider, apiKey string) (stri
 	if !providerPattern.MatchString(provider) {
 		return "", ErrInvalidProvider
 	}
+	if !supportsAPIKeyProvider(provider) {
+		return "", ErrInvalidProvider
+	}
 	if len(apiKey) < 8 || len(apiKey) > 8192 || strings.ContainsAny(apiKey, "\r\n\x00") {
 		return "", ErrInvalidAPIKey
 	}
 	profileID := provider + ":default"
-	_, err := s.run(ctx, strings.NewReader(apiKey+"\n"), "models", "auth", "paste-api-key", "--provider", provider, "--profile-id", profileID)
-	if err != nil {
+	if err := s.saveAPIKeyProfile(ctx, provider, profileID, apiKey); err != nil {
 		return "", err
 	}
 	return profileID, nil
+}
+
+func (s *Service) LoadAPIKey(ctx context.Context, provider string) (string, error) {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	if !providerPattern.MatchString(provider) {
+		return "", ErrInvalidProvider
+	}
+	agentDir, err := s.defaultAgentDir()
+	if err != nil {
+		return "", err
+	}
+	return readAuthProfileAPIKey(ctx, filepath.Join(agentDir, "openclaw-agent.sqlite"), provider, provider+":default")
+}
+
+func (s *Service) saveAPIKeyProfile(ctx context.Context, provider, profileID, apiKey string) error {
+	agentDir, err := s.defaultAgentDir()
+	if err != nil {
+		return err
+	}
+	if err := writeAuthProfileStore(ctx, filepath.Join(agentDir, "openclaw-agent.sqlite"), provider, profileID, apiKey); err != nil {
+		return err
+	}
+	if err := s.applyAuthProfileConfig(provider, profileID, "api_key"); err != nil {
+		return err
+	}
+	go s.refreshGatewayAuthState(context.Background())
+	return nil
+}
+
+func writeAuthProfileStore(ctx context.Context, databasePath, provider, profileID, apiKey string) error {
+	if err := os.MkdirAll(filepath.Dir(databasePath), 0o700); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS auth_profile_store (
+  store_key TEXT NOT NULL PRIMARY KEY,
+  store_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+)`); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS auth_profile_state (
+  state_key TEXT NOT NULL PRIMARY KEY,
+  state_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+)`); err != nil {
+		return err
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var store authProfileStore
+	var raw string
+	err = tx.QueryRowContext(ctx, `SELECT store_json FROM auth_profile_store WHERE store_key = 'primary'`).Scan(&raw)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		store.Version = 1
+		store.Profiles = map[string]map[string]any{}
+	case err != nil:
+		return err
+	default:
+		if err := json.Unmarshal([]byte(raw), &store); err != nil {
+			return fmt.Errorf("%w: auth profile store: %v", ErrInvalidResponse, err)
+		}
+		if store.Version == 0 {
+			store.Version = 1
+		}
+		if store.Profiles == nil {
+			store.Profiles = map[string]map[string]any{}
+		}
+	}
+	store.Profiles[profileID] = map[string]any{"type": "api_key", "provider": provider, "key": apiKey}
+	payload, err := json.Marshal(store)
+	if err != nil {
+		return err
+	}
+	updatedAt := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO auth_profile_store (store_key, store_json, updated_at)
+VALUES ('primary', ?, ?)
+ON CONFLICT(store_key) DO UPDATE SET store_json = excluded.store_json, updated_at = excluded.updated_at`, string(payload), updatedAt); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = os.Chmod(databasePath, 0o600)
+	return nil
+}
+
+type authProfileStore struct {
+	Version    int                       `json:"version"`
+	Profiles   map[string]map[string]any `json:"profiles"`
+	Order      map[string][]string       `json:"order,omitempty"`
+	LastGood   map[string]string         `json:"lastGood,omitempty"`
+	UsageStats map[string]any            `json:"usageStats,omitempty"`
+}
+
+func (s *Service) applyAuthProfileConfig(provider, profileID, mode string) error {
+	if s.configPath == "" {
+		return ErrUnavailable
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return err
+	}
+	var config map[string]any
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		config = map[string]any{}
+	} else if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("%w: openclaw config: %v", ErrInvalidResponse, err)
+	}
+	auth := ensureObject(config, "auth")
+	profiles := ensureObject(auth, "profiles")
+	profiles[profileID] = map[string]any{"provider": provider, "mode": mode}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(s.configPath, append(data, '\n'), 0o600)
+}
+
+func (s *Service) applyDefaultModelConfig(modelID string) error {
+	if s.configPath == "" {
+		return ErrUnavailable
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return err
+	}
+	var config map[string]any
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		config = map[string]any{}
+	} else if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("%w: openclaw config: %v", ErrInvalidResponse, err)
+	}
+	agents := ensureObject(config, "agents")
+	defaults := ensureObject(agents, "defaults")
+	defaults["model"] = map[string]any{"primary": modelID}
+	defaultModels := ensureObject(defaults, "models")
+	if _, ok := defaultModels[modelID]; !ok {
+		defaultModels[modelID] = map[string]any{}
+	}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(s.configPath, append(data, '\n'), 0o600)
+}
+
+func (s *Service) applyModelSelectionConfig(defaultModel string, selectedModels []string) error {
+	if s.configPath == "" {
+		return ErrUnavailable
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return err
+	}
+	var config map[string]any
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		config = map[string]any{}
+	} else if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("%w: openclaw config: %v", ErrInvalidResponse, err)
+	}
+	agents := ensureObject(config, "agents")
+	defaults := ensureObject(agents, "defaults")
+	defaults["model"] = map[string]any{"primary": defaultModel}
+	defaultModels := make(map[string]any, len(selectedModels))
+	for _, modelID := range selectedModels {
+		modelID = strings.TrimSpace(modelID)
+		if modelID != "" {
+			defaultModels[modelID] = map[string]any{}
+		}
+	}
+	defaultModels[defaultModel] = map[string]any{}
+	defaults["models"] = defaultModels
+	ensureConfiguredProviderModels(config, selectedModels)
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(s.configPath, append(data, '\n'), 0o600)
+}
+
+// ensureConfiguredProviderModels bridges the application catalog and OpenClaw's
+// provider configuration. Some OpenClaw providers expose their model catalog
+// only after a model row is present in models.providers. MiniMax is one such
+// provider in the pinned version, so saving a catalog model must also register
+// its provider-side definition.
+func ensureConfiguredProviderModels(config map[string]any, selectedModels []string) {
+	modelsObject := ensureObject(config, "models")
+	providers := ensureObject(modelsObject, "providers")
+	for _, modelID := range selectedModels {
+		provider, modelName, ok := strings.Cut(strings.TrimSpace(modelID), "/")
+		if !ok || provider != "minimax" {
+			continue
+		}
+		catalogModel, found := fixedCatalogModel(modelID)
+		if !found {
+			continue
+		}
+		providerObject := ensureObject(providers, provider)
+		existing, _ := providerObject["models"].([]any)
+		alreadyPresent := false
+		for _, item := range existing {
+			entry, _ := item.(map[string]any)
+			if strings.TrimSpace(stringValue(entry["id"])) == modelName {
+				alreadyPresent = true
+				break
+			}
+		}
+		if alreadyPresent {
+			continue
+		}
+		input := []any{"text"}
+		if strings.Contains(catalogModel.Input, "image") {
+			input = append(input, "image")
+		}
+		existing = append(existing, map[string]any{
+			"api":           "anthropic-messages",
+			"id":            modelName,
+			"name":          catalogModel.Name,
+			"input":         input,
+			"contextWindow": catalogModel.ContextWindow,
+			"reasoning":     true,
+		})
+		providerObject["models"] = existing
+	}
+}
+
+func fixedCatalogModel(modelID string) (Model, bool) {
+	for _, model := range fixedModelCatalog {
+		if model.Key == modelID {
+			return model, true
+		}
+	}
+	return Model{}, false
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func (s *Service) applyProviderBaseURLConfig(provider, baseURL string) error {
+	if s.configPath == "" {
+		return ErrUnavailable
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return err
+	}
+	var config map[string]any
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		config = map[string]any{}
+	} else if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("%w: openclaw config: %v", ErrInvalidResponse, err)
+	}
+	models := ensureObject(config, "models")
+	providers := ensureObject(models, "providers")
+	entry := ensureObject(providers, provider)
+	if baseURL == "" {
+		delete(entry, "baseUrl")
+	} else {
+		entry["baseUrl"] = baseURL
+	}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(s.configPath, append(data, '\n'), 0o600)
+}
+
+func readAuthProfileAPIKey(ctx context.Context, databasePath, provider, profileID string) (string, error) {
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var raw string
+	if err := db.QueryRowContext(ctx, `SELECT store_json FROM auth_profile_store WHERE store_key = 'primary'`).Scan(&raw); err != nil {
+		return "", err
+	}
+	var store authProfileStore
+	if err := json.Unmarshal([]byte(raw), &store); err != nil {
+		return "", fmt.Errorf("%w: auth profile store: %v", ErrInvalidResponse, err)
+	}
+	profile, ok := store.Profiles[profileID]
+	if !ok {
+		return "", ErrInvalidAPIKey
+	}
+	if storedProvider, _ := profile["provider"].(string); strings.TrimSpace(storedProvider) != "" && strings.TrimSpace(storedProvider) != provider {
+		return "", ErrInvalidProvider
+	}
+	apiKey, _ := profile["key"].(string)
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return "", ErrInvalidAPIKey
+	}
+	return apiKey, nil
+}
+
+func ensureObject(parent map[string]any, key string) map[string]any {
+	if existing, ok := parent[key].(map[string]any); ok {
+		return existing
+	}
+	next := map[string]any{}
+	parent[key] = next
+	return next
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+func (s *Service) refreshGatewayAuthState(ctx context.Context) {
+	if s.bin == "" || !isExecutable(s.bin) {
+		return
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, _ = s.run(refreshCtx, nil, "gateway", "call", "models.authStatus", "--params", `{"refresh":true}`)
+}
+
+func (s *Service) defaultAgentDir() (string, error) {
+	stateDir, err := s.stateDir()
+	if err != nil {
+		return "", err
+	}
+	if s.configPath == "" {
+		return filepath.Join(stateDir, "agents", "main", "agent"), nil
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return "", err
+	}
+	var config struct {
+		Agents struct {
+			List []struct {
+				ID       string `json:"id"`
+				Default  bool   `json:"default"`
+				AgentDir string `json:"agentDir"`
+			} `json:"list"`
+		} `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return "", fmt.Errorf("%w: openclaw config: %v", ErrInvalidResponse, err)
+	}
+	if len(config.Agents.List) == 0 {
+		return filepath.Join(stateDir, "agents", "main", "agent"), nil
+	}
+	chosen := config.Agents.List[0]
+	for _, agent := range config.Agents.List {
+		if agent.Default {
+			chosen = agent
+			break
+		}
+	}
+	if strings.TrimSpace(chosen.AgentDir) != "" {
+		return expandUserPath(strings.TrimSpace(chosen.AgentDir)), nil
+	}
+	id := strings.TrimSpace(strings.ToLower(chosen.ID))
+	if id == "" {
+		id = "main"
+	}
+	return filepath.Join(stateDir, "agents", id, "agent"), nil
+}
+
+func (s *Service) stateDir() (string, error) {
+	if value := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")); value != "" {
+		return expandUserPath(value), nil
+	}
+	if s.configPath != "" {
+		return filepath.Dir(s.configPath), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".openclaw"), nil
+}
+
+func expandUserPath(path string) string {
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	return path
 }
 
 func (s *Service) ListAgents(ctx context.Context) ([]Agent, error) {
@@ -429,7 +1381,16 @@ func (s *Service) SendAgentMessage(ctx context.Context, input AgentMessageInput)
 		return AgentMessageResult{}, fmt.Errorf("close agent message file: %w", err)
 	}
 
-	out, err := s.run(ctx, nil, "agent", "--agent", input.AgentID, "--message-file", messagePath, "--session-key", input.SessionKey, "--json", "--timeout", "90")
+	args := []string{"agent", "--agent", input.AgentID}
+	model := s.agentMessageModelOverride(input.Model)
+	if model != "" {
+		if !modelIDPattern.MatchString(model) {
+			return AgentMessageResult{}, ErrInvalidModel
+		}
+		args = append(args, "--model", model)
+	}
+	args = append(args, "--message-file", messagePath, "--session-key", input.SessionKey, "--json", "--timeout", "90")
+	out, err := s.run(ctx, nil, args...)
 	if err != nil {
 		return AgentMessageResult{}, err
 	}
@@ -442,6 +1403,274 @@ func (s *Service) SendAgentMessage(ctx context.Context, input AgentMessageInput)
 	return result, nil
 }
 
+// SessionHistory reads persisted messages from OpenClaw's JSONL session store.
+// sessionKey is the application session key, for example
+// "sta100-export-agent". The caller may pass the stage-specific key as well.
+func (s *Service) SessionHistory(ctx context.Context, agentID, sessionKey string, limit int) ([]SessionHistoryMessage, error) {
+	agentID = strings.TrimSpace(strings.ToLower(agentID))
+	sessionKey = strings.TrimSpace(sessionKey)
+	if !agentIDPattern.MatchString(agentID) {
+		return nil, ErrInvalidAgent
+	}
+	if !sessionPattern.MatchString(sessionKey) {
+		return nil, ErrInvalidSession
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	records, err := s.listSessionRecords(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	targets := map[string]bool{
+		sessionKey: true,
+		strings.TrimSuffix(sessionKey, "-coordinator") + "-coordinator": true,
+	}
+	var selected sessionRecord
+	found := false
+	for _, record := range records {
+		if sessionRecordMatches(record.Key, agentID, targets) {
+			if !found || record.UpdatedAt > selected.UpdatedAt {
+				selected = record
+				found = true
+			}
+		}
+	}
+	if !found {
+		return []SessionHistoryMessage{}, nil
+	}
+	path, err := s.safeSessionFilePath(agentID, selected.SessionFile)
+	if err != nil {
+		return nil, err
+	}
+	messages, err := readSessionHistoryFile(path, limit)
+	if err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+type sessionRecord struct {
+	Key         string `json:"key"`
+	UpdatedAt   int64  `json:"updatedAt"`
+	SessionFile string `json:"sessionFile"`
+}
+
+func (s *Service) listSessionRecords(ctx context.Context, agentID string) ([]sessionRecord, error) {
+	if stateDir, stateErr := s.stateDir(); stateErr == nil {
+		indexPath := filepath.Join(stateDir, "agents", agentID, "sessions", "sessions.json")
+		if data, readErr := os.ReadFile(indexPath); readErr == nil {
+			if records, parseErr := parseSessionIndex(data); parseErr == nil {
+				return records, nil
+			}
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	out, err := s.run(ctx, nil, "sessions", "--agent", agentID, "--json", "--limit", "500")
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Sessions []sessionRecord `json:"sessions"`
+	}
+	if err := json.Unmarshal(out, &response); err != nil {
+		return nil, fmt.Errorf("%w: sessions list: %v", ErrInvalidResponse, err)
+	}
+	return response.Sessions, nil
+}
+
+func parseSessionIndex(data []byte) ([]sessionRecord, error) {
+	var response struct {
+		Sessions []sessionRecord `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &response); err == nil && response.Sessions != nil {
+		return response.Sessions, nil
+	}
+	var entries map[string]sessionRecord
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	records := make([]sessionRecord, 0, len(entries))
+	for key, record := range entries {
+		record.Key = key
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func sessionRecordMatches(key, agentID string, targets map[string]bool) bool {
+	key = strings.TrimSpace(key)
+	prefix := "agent:" + agentID + ":"
+	if strings.HasPrefix(key, prefix) {
+		key = strings.TrimPrefix(key, prefix)
+	}
+	return targets[key]
+}
+
+func (s *Service) safeSessionFilePath(agentID, sessionFile string) (string, error) {
+	sessionFile = expandUserPath(strings.TrimSpace(sessionFile))
+	if sessionFile == "" {
+		return "", fmt.Errorf("%w: session file is empty", ErrInvalidResponse)
+	}
+	root, err := s.stateDir()
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	path, err := filepath.Abs(sessionFile)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%w: session file is outside OpenClaw state directory", ErrInvalidResponse)
+	}
+	expectedPrefix := filepath.Join("agents", agentID, "sessions") + string(filepath.Separator)
+	if !strings.HasPrefix(relative, expectedPrefix) {
+		return "", fmt.Errorf("%w: session file is outside the agent session directory", ErrInvalidResponse)
+	}
+	return path, nil
+}
+
+func readSessionHistoryFile(path string, limit int) ([]SessionHistoryMessage, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("read OpenClaw session: %w", err)
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	messages := make([]SessionHistoryMessage, 0, limit)
+	for {
+		var event struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Message   struct {
+				Role         string          `json:"role"`
+				Content      json.RawMessage `json:"content"`
+				Provider     string          `json:"provider"`
+				Model        string          `json:"model"`
+				RunID        string          `json:"runId"`
+				StopReason   string          `json:"stopReason"`
+				ErrorMessage string          `json:"errorMessage"`
+			} `json:"message"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("%w: session JSONL: %v", ErrInvalidResponse, err)
+		}
+		if event.Type != "message" {
+			continue
+		}
+		role := strings.TrimSpace(event.Message.Role)
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		text := extractSessionText(event.Message.Content)
+		if role == "user" {
+			text = extractOriginalUserMessage(text)
+		}
+		if text == "" && event.Message.ErrorMessage != "" {
+			text = "OpenClaw 调用失败：" + strings.TrimSpace(event.Message.ErrorMessage)
+		}
+		if text == "" {
+			continue
+		}
+		item := SessionHistoryMessage{
+			Role: role, Text: text, CreatedAt: event.Timestamp,
+			Model: event.Message.Model, Provider: event.Message.Provider,
+			RunID: event.Message.RunID, Error: event.Message.ErrorMessage,
+		}
+		if role == "assistant" && item.Error != "" {
+			item.Text = "OpenClaw 调用失败：" + strings.TrimSpace(item.Error)
+		}
+		messages = append(messages, item)
+	}
+	if len(messages) > limit {
+		messages = append([]SessionHistoryMessage(nil), messages[len(messages)-limit:]...)
+	}
+	return messages, nil
+}
+
+func extractSessionText(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		parts := make([]string, 0, len(blocks))
+		for _, block := range blocks {
+			if block.Type == "" || block.Type == "text" {
+				if value := strings.TrimSpace(block.Text); value != "" {
+					parts = append(parts, value)
+				}
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	}
+	var object struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &object) == nil {
+		return strings.TrimSpace(object.Text)
+	}
+	return ""
+}
+
+func extractOriginalUserMessage(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	const marker = "[用户消息]"
+	if index := strings.Index(text, marker); index >= 0 {
+		candidate := strings.TrimSpace(text[index+len(marker):])
+		if jsonStart := strings.Index(candidate, "{"); jsonStart >= 0 {
+			var envelope struct {
+				UserMessage string `json:"userMessage"`
+			}
+			if err := json.Unmarshal([]byte(candidate[jsonStart:]), &envelope); err == nil && strings.TrimSpace(envelope.UserMessage) != "" {
+				return strings.TrimSpace(envelope.UserMessage)
+			}
+		}
+		return candidate
+	}
+	return text
+}
+
+func (s *Service) agentMessageModelOverride(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	snapshot := s.ModelSnapshot()
+	defaultModel := strings.TrimSpace(firstNonEmpty(snapshot.ResolvedDefault, snapshot.DefaultModel))
+	if defaultModel != "" && model == defaultModel {
+		return ""
+	}
+	return model
+}
+
 func buildAgentMessage(input AgentMessageInput) string {
 	var builder strings.Builder
 	builder.WriteString("[STA-100 本次来源约束]\n允许来源类别：")
@@ -449,6 +1678,19 @@ func buildAgentMessage(input AgentMessageInput) string {
 	if len(input.Allowlist) > 0 {
 		builder.WriteString("\n联网检索仅允许以下域名：")
 		builder.WriteString(strings.Join(input.Allowlist, "、"))
+	}
+	if len(input.Attachments) > 0 {
+		builder.WriteString("\n本次附件（由 Go 应用保存于本机临时目录，Agent 需要使用可用文件读取能力读取；如无法读取必须明确说明，不得假设已查看）：")
+		for _, attachment := range input.Attachments {
+			builder.WriteString("\n- ")
+			builder.WriteString(attachment.Name)
+			builder.WriteString(" | ")
+			builder.WriteString(attachment.Path)
+			if attachment.Mime != "" {
+				builder.WriteString(" | ")
+				builder.WriteString(attachment.Mime)
+			}
+		}
 	}
 	builder.WriteString("\n回答时请区分事实来源；无法访问所选来源时必须明确说明，不得假设已检索。\n\n[用户消息]\n")
 	builder.WriteString(input.Message)

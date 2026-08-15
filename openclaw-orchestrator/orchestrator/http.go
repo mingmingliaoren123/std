@@ -57,9 +57,7 @@ func NewHTTPHandler(service *Service, options HTTPOptions) http.Handler {
 		if !decodeBody(w, r, &request) {
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-		defer cancel()
-		err := service.SetDefaultModel(ctx, request.Model)
+		err := service.SetConfiguredDefaultModel(request.Model)
 		writeResult(w, map[string]any{"updated": err == nil, "defaultModel": strings.TrimSpace(request.Model)}, err)
 	})
 	mux.HandleFunc("/v1/models/auth", func(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +75,108 @@ func NewHTTPHandler(service *Service, options HTTPOptions) http.Handler {
 		defer cancel()
 		profile, err := service.SaveAPIKey(ctx, request.Provider, request.APIKey)
 		writeResult(w, map[string]any{"updated": err == nil, "provider": strings.ToLower(strings.TrimSpace(request.Provider)), "profile": profile}, err)
+	})
+	mux.HandleFunc("/v1/plugins", func(w http.ResponseWriter, r *http.Request) {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		plugins, err := service.Plugins(r.Context())
+		writeResult(w, map[string]any{"catalogVersion": PluginCatalogVersion, "count": len(plugins), "plugins": plugins}, err)
+	})
+	mux.HandleFunc("/v1/plugins/", func(w http.ResponseWriter, r *http.Request) {
+		if !allowMutation(w, r, http.MethodPost, options) {
+			return
+		}
+		pluginID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/plugins/"), "/")
+		var request struct {
+			Enabled bool `json:"enabled"`
+		}
+		if !decodeBody(w, r, &request) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		err := service.SetPluginEnabled(ctx, pluginID, request.Enabled)
+		writeResult(w, map[string]any{"updated": err == nil, "id": pluginID, "enabled": request.Enabled}, err)
+	})
+	mux.HandleFunc("/v1/channels", func(w http.ResponseWriter, r *http.Request) {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		channels, err := service.Channels(r.Context())
+		writeResult(w, map[string]any{"catalogVersion": ChannelCatalogVersion, "count": len(channels), "channels": channels}, err)
+	})
+	mux.HandleFunc("/v1/channels/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/channels/"), "/"), "/")
+		if len(parts) == 3 && parts[1] == "qr" && parts[2] == "start" {
+			if !allowMutation(w, r, http.MethodPost, options) {
+				return
+			}
+			var request struct {
+				Account string `json:"account"`
+				Domain  string `json:"domain"`
+			}
+			if !decodeBody(w, r, &request) {
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+			defer cancel()
+			result, err := service.StartFeishuQR(ctx, parts[0], request.Account, request.Domain)
+			writeResult(w, result, err)
+			return
+		}
+		if len(parts) == 4 && parts[1] == "qr" && parts[3] == "status" {
+			if !allowMethod(w, r, http.MethodGet) {
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+			defer cancel()
+			result, err := service.PollFeishuQR(ctx, parts[0], parts[2])
+			writeResult(w, result, err)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "status" {
+			if !allowMethod(w, r, http.MethodGet) {
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+			defer cancel()
+			status, err := service.ChannelStatus(ctx, parts[0])
+			writeResult(w, status, err)
+			return
+		}
+		if len(parts) == 2 && parts[1] == "login" {
+			if !allowMutation(w, r, http.MethodPost, options) {
+				return
+			}
+			var request struct {
+				Account string `json:"account"`
+			}
+			if !decodeBody(w, r, &request) {
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			defer cancel()
+			result, err := service.LoginChannel(ctx, parts[0], request.Account)
+			writeResult(w, result, err)
+			return
+		}
+		if len(parts) != 1 || parts[0] == "" {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "channel endpoint not found")
+			return
+		}
+		if !allowMutation(w, r, http.MethodPost, options) {
+			return
+		}
+		var request ChannelAccountRequest
+		if !decodeBody(w, r, &request) {
+			return
+		}
+		request.Channel = parts[0]
+		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		defer cancel()
+		result, err := service.AddChannelAccount(ctx, request)
+		writeResult(w, result, err)
 	})
 	mux.HandleFunc("/v1/agents", func(w http.ResponseWriter, r *http.Request) {
 		if !allowMethod(w, r, http.MethodGet) {

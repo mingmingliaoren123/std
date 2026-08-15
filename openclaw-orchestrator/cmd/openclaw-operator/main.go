@@ -23,7 +23,7 @@ func main() {
 	addr := flags.String("addr", "127.0.0.1:18790", "HTTP listen address for serve")
 	timeout := flags.Duration("timeout", 10*time.Minute, "command timeout")
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: openclaw-operator [flags] <status|models|agents list|agents sync|serve>")
+		fmt.Fprintln(flags.Output(), "Usage: openclaw-operator [flags] <status|models|plugins|agents list|agents sync|serve>")
 		flags.PrintDefaults()
 	}
 	_ = flags.Parse(os.Args[1:])
@@ -66,6 +66,10 @@ func main() {
 		value, err = service.Status(ctx)
 	case "models":
 		value, err = service.Models(ctx)
+	case "plugins":
+		var plugins []orchestrator.Plugin
+		plugins, err = service.Plugins(ctx)
+		value = map[string]any{"catalogVersion": orchestrator.PluginCatalogVersion, "count": len(plugins), "plugins": plugins}
 	case "agents list":
 		var agents []orchestrator.Agent
 		agents, err = service.ListAgents(ctx)

@@ -6,7 +6,7 @@ const password = process.env.STA100_PASSWORD || 'admin';
 const viewportWidth = Number(process.env.VIEWPORT_WIDTH || 1440);
 const viewportHeight = Number(process.env.VIEWPORT_HEIGHT || 1000);
 const pages = ['overview', 'agents', 'customers', 'quotes', 'orders', 'documents', 'products', 'suppliers', 'database', 'news', 'settings'];
-const settingsTabs = ['model', 'plugins', 'scheduler', 'backup', 'security', 'system', 'upgrade'];
+const settingsTabs = ['model', 'channels', 'scheduler', 'backup', 'security', 'system', 'upgrade'];
 
 const targets = await fetch(`${endpoint}/json/list`).then(response => response.json());
 const target = targets.find(item => item.type === 'page');

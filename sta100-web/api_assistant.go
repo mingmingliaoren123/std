@@ -3,10 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +36,13 @@ var assistantDomainAgentIDs = map[string]bool{
 }
 
 type assistantQueryRequest struct {
-	Page       string         `json:"page"`
-	Feature    string         `json:"feature"`
-	Message    string         `json:"message"`
-	SessionKey string         `json:"sessionKey"`
-	Context    map[string]any `json:"context"`
+	Page        string                           `json:"page"`
+	Feature     string                           `json:"feature"`
+	Model       string                           `json:"model"`
+	Message     string                           `json:"message"`
+	SessionKey  string                           `json:"sessionKey"`
+	Context     map[string]any                   `json:"context"`
+	Attachments []orchestrator.MessageAttachment `json:"attachments"`
 }
 
 type assistantEvidence struct {
@@ -56,6 +63,12 @@ type assistantAgentOutput struct {
 	UsageAvailable bool                    `json:"usageAvailable"`
 }
 
+type assistantAttachmentView struct {
+	Name string `json:"name"`
+	Mime string `json:"mime,omitempty"`
+	Size int64  `json:"size,omitempty"`
+}
+
 type assistantPipelineStage struct {
 	Stage  string `json:"stage"`
 	Status string `json:"status"`
@@ -63,20 +76,29 @@ type assistantPipelineStage struct {
 }
 
 type assistantQueryResponse struct {
-	Text        string                   `json:"text"`
-	Items       []map[string]any         `json:"items"`
-	UsedAgents  []string                 `json:"usedAgents"`
-	Evidence    []assistantEvidence      `json:"evidence"`
-	Conflicts   []map[string]any         `json:"conflicts"`
-	Outputs     []assistantAgentOutput   `json:"agentOutputs,omitempty"`
-	Pipeline    []assistantPipelineStage `json:"pipeline"`
-	AIGenerated bool                     `json:"aiGenerated"`
-	Partial     bool                     `json:"partial"`
-	Todo        []string                 `json:"todo,omitempty"`
-	TokenUsage  tokenUsageSummary        `json:"tokenUsage"`
+	Text        string                    `json:"text"`
+	Items       []map[string]any          `json:"items"`
+	UsedAgents  []string                  `json:"usedAgents"`
+	Evidence    []assistantEvidence       `json:"evidence"`
+	Conflicts   []map[string]any          `json:"conflicts"`
+	Outputs     []assistantAgentOutput    `json:"agentOutputs,omitempty"`
+	Pipeline    []assistantPipelineStage  `json:"pipeline"`
+	Attachments []assistantAttachmentView `json:"attachments,omitempty"`
+	AIGenerated bool                      `json:"aiGenerated"`
+	Partial     bool                      `json:"partial"`
+	Todo        []string                  `json:"todo,omitempty"`
+	TokenUsage  tokenUsageSummary         `json:"tokenUsage"`
 }
 
 func (a *businessAPI) assistantRouter(w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) == 1 && parts[0] == "attachments" {
+		a.assistantAttachmentUpload(w, r)
+		return
+	}
+	if len(parts) == 1 && parts[0] == "history" {
+		a.assistantHistory(w, r)
+		return
+	}
 	if len(parts) != 1 || parts[0] != "query" {
 		writeAPIError(w, http.StatusNotFound, "API_NOT_FOUND", "统一智能查询接口不存在")
 		return
@@ -107,14 +129,153 @@ func (a *businessAPI) assistantRouter(w http.ResponseWriter, r *http.Request, pa
 		writeAPIError(w, http.StatusBadRequest, "INVALID_TARGET_AGENT", "目标 Agent 必须是 STA-100 的专业业务 Agent")
 		return
 	}
+	if request.Model != "" && !a.modelPreviouslyTestedOK(r.Context(), request.Model) {
+		writeAPIError(w, http.StatusBadRequest, "MODEL_NOT_TESTED", "聊天只能选择已测试通过的模型")
+		return
+	}
+	if err := validateAssistantAttachments(request.Attachments); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_ATTACHMENT", err.Error())
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
 	defer cancel()
 	requestID := fmt.Sprintf("AI-%d", time.Now().UnixNano())
 	response := a.runAssistantQuery(ctx, request, requestID)
+	cleanupAssistantAttachments(request.Attachments)
 	a.store.audit(r.Context(), "query", "assistant", request.Feature, requestOperator(r), map[string]any{
 		"page": request.Page, "usedAgents": response.UsedAgents, "partial": response.Partial, "evidenceCount": len(response.Evidence),
 	})
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *businessAPI) assistantHistory(w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	query := r.URL.Query()
+	agentID := strings.TrimSpace(strings.ToLower(query.Get("agentId")))
+	sessionKey := strings.TrimSpace(query.Get("sessionKey"))
+	if !assistantDomainAgentIDs[agentID] {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_TARGET_AGENT", "历史记录只能查询 STA-100 的专业业务 Agent")
+		return
+	}
+	if sessionKey == "" {
+		sessionKey = "sta100-" + agentID
+	}
+	if !assistantSessionPattern.MatchString(sessionKey) {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_ASSISTANT_SESSION", "会话标识格式无效")
+		return
+	}
+	limit := 100
+	if value := strings.TrimSpace(query.Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 500 {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_HISTORY_LIMIT", "历史记录条数必须是 1-500 的整数")
+			return
+		}
+		limit = parsed
+	}
+	stageKey := assistantStageSession(sessionKey, "coordinator")
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	messages, err := a.openClaw.service.SessionHistory(ctx, coordinatorAgentID, stageKey, limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			writeAPIError(w, http.StatusGatewayTimeout, "OPENCLAW_HISTORY_TIMEOUT", "查询 OpenClaw 聊天记录超时")
+		case errors.Is(err, orchestrator.ErrUnavailable):
+			writeAPIError(w, http.StatusServiceUnavailable, "OPENCLAW_HISTORY_UNAVAILABLE", "OpenClaw 不可用，无法查询聊天记录")
+		default:
+			writeAPIError(w, http.StatusBadGateway, "OPENCLAW_HISTORY_FAILED", "OpenClaw 聊天记录查询失败："+err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"source":      "openclaw",
+		"agentId":     agentID,
+		"sessionKey":  sessionKey,
+		"stageKey":    stageKey,
+		"messages":    messages,
+		"total":       len(messages),
+		"hasMore":     false,
+		"notice":      "历史记录来自 OpenClaw 持久化会话；系统内部提示、工具调用和思考过程不展示。",
+	})
+}
+
+func validateAssistantAttachments(attachments []orchestrator.MessageAttachment) error {
+	if len(attachments) > 8 {
+		return fmt.Errorf("单次最多上传 8 个附件")
+	}
+	root, err := filepath.Abs(filepath.Join(os.TempDir(), "sta100-agent-attachments"))
+	if err != nil {
+		return fmt.Errorf("附件目录不可用")
+	}
+	for _, attachment := range attachments {
+		path, err := filepath.Abs(strings.TrimSpace(attachment.Path))
+		if err != nil || (path != root && !strings.HasPrefix(path, root+string(os.PathSeparator))) {
+			return fmt.Errorf("附件路径不在 STA-100 临时目录内")
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return fmt.Errorf("附件已不存在，请重新上传")
+		}
+		if info.Size() > 25<<20 {
+			return fmt.Errorf("单个附件必须在 25 MB 以内")
+		}
+	}
+	return nil
+}
+
+func cleanupAssistantAttachments(attachments []orchestrator.MessageAttachment) {
+	for _, attachment := range attachments {
+		_ = os.Remove(attachment.Path)
+	}
+}
+
+func (a *businessAPI) assistantAttachmentUpload(w http.ResponseWriter, r *http.Request) {
+	if !allowMutation(w, r, http.MethodPost) {
+		return
+	}
+	if err := r.ParseMultipartForm(26 << 20); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_ATTACHMENT", "附件格式无效或超过 25 MB")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "ATTACHMENT_REQUIRED", "请选择要上传的图片或文件")
+		return
+	}
+	defer file.Close()
+	if header.Size <= 0 || header.Size > 25<<20 {
+		writeAPIError(w, http.StatusBadRequest, "ATTACHMENT_TOO_LARGE", "单个附件必须在 25 MB 以内")
+		return
+	}
+	root := filepath.Join(os.TempDir(), "sta100-agent-attachments")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	target, err := os.CreateTemp(root, "attachment-*"+filepath.Ext(header.Filename))
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	path := target.Name()
+	defer target.Close()
+	if err := target.Chmod(0o600); err != nil {
+		_ = os.Remove(path)
+		writeBusinessError(w, err)
+		return
+	}
+	written, err := io.Copy(target, io.LimitReader(file, 25<<20))
+	if err != nil {
+		_ = os.Remove(path)
+		writeBusinessError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"attachment": orchestrator.MessageAttachment{
+		Name: filepath.Base(header.Filename), Path: path, Mime: header.Header.Get("Content-Type"), Size: written,
+	}})
 }
 
 func (a *businessAPI) runAssistantQuery(ctx context.Context, request assistantQueryRequest, requestID string) assistantQueryResponse {
@@ -122,14 +283,18 @@ func (a *businessAPI) runAssistantQuery(ctx context.Context, request assistantQu
 	sortAssistantEvidence(evidence)
 	response := assistantQueryResponse{
 		Evidence: evidence, Items: a.localAssistantItems(request, evidence), Conflicts: detectEvidenceConflicts(evidence),
+		Attachments: assistantAttachmentViews(request.Attachments),
 		AIGenerated: true, Partial: false,
 		Todo: []string{"客户私有文件正文解析和向量索引等待原始数据格式", "联网工具接入后在工具层强制执行域名白名单"},
 	}
 	response.Pipeline = append(response.Pipeline, assistantPipelineStage{Stage: "local-retrieval", Status: "ok", Detail: fmt.Sprintf("检索到 %d 条本地结构化证据", len(evidence))})
+	if len(request.Attachments) > 0 {
+		response.Pipeline = append(response.Pipeline, assistantPipelineStage{Stage: "attachments", Status: "ok", Detail: fmt.Sprintf("%d 个附件已校验并提交给 OpenClaw Agent", len(request.Attachments))})
+	}
 
 	evidenceJSON, _ := json.Marshal(evidence)
 	knowledgePrompt := fmt.Sprintf("[页面] %s\n[功能] %s\n[用户输入]\n%s\n\n[Go 本地检索证据 JSON]\n%s\n\n请按工作区规则整理证据。不得联网；冲突值必须全部保留。", request.Page, request.Feature, request.Message, evidenceJSON)
-	knowledge, err := a.sendAssistantAgent(ctx, knowledgeAgentID, assistantStageSession(request.SessionKey, "knowledge"), knowledgePrompt, []string{"本地业务数据库", "客户私有知识库"}, nil)
+	knowledge, err := a.sendAssistantAgent(ctx, knowledgeAgentID, request.Model, assistantStageSession(request.SessionKey, "knowledge"), knowledgePrompt, []string{"本地业务数据库", "客户私有知识库"}, nil, request.Attachments)
 	if err != nil {
 		a.recordTokenUsage(ctx, requestID, request.Page, request.Feature, "knowledge-agent", knowledgeAgentID, "failed", knowledge)
 		response.Partial = true
@@ -162,13 +327,14 @@ func (a *businessAPI) runAssistantQuery(ctx context.Context, request assistantQu
 	}
 	coordinatorJSON, _ := json.Marshal(coordinatorInput)
 	coordinatorPrompt := "请根据工作区规则整合以下 STA-100 查询上下文。只使用已提供内容，不得声称调用了未返回结果的 Agent。\n\n" + string(coordinatorJSON)
-	coordinator, coordinatorErr := a.sendAssistantAgent(ctx, coordinatorAgentID, assistantStageSession(request.SessionKey, "coordinator"), coordinatorPrompt, []string{"本地业务数据库", "客户私有知识库"}, nil)
+	coordinator, coordinatorErr := a.sendAssistantAgent(ctx, coordinatorAgentID, request.Model, assistantStageSession(request.SessionKey, "coordinator"), coordinatorPrompt, []string{"本地业务数据库", "客户私有知识库"}, nil, request.Attachments)
 	if coordinatorErr != nil {
+		coordinatorErrorText := assistantErrorText(coordinatorErr)
 		a.recordTokenUsage(ctx, requestID, request.Page, request.Feature, "coordinator-agent", coordinatorAgentID, "failed", coordinator)
 		response.Partial = true
-		response.Text = localAssistantSummary(request, response.Items, evidence, domainOutputs)
-		response.Outputs = append(response.Outputs, assistantOutputFromResult(coordinatorAgentID, coordinator, assistantErrorText(coordinatorErr)))
-		response.Pipeline = append(response.Pipeline, assistantPipelineStage{Stage: "coordinator-agent", Status: "failed", Detail: assistantErrorText(coordinatorErr)})
+		response.Text = localAssistantSummary(request, response.Items, evidence, domainOutputs, coordinatorErrorText)
+		response.Outputs = append(response.Outputs, assistantOutputFromResult(coordinatorAgentID, coordinator, coordinatorErrorText))
+		response.Pipeline = append(response.Pipeline, assistantPipelineStage{Stage: "coordinator-agent", Status: "failed", Detail: coordinatorErrorText})
 	} else {
 		a.recordTokenUsage(ctx, requestID, request.Page, request.Feature, "coordinator-agent", coordinatorAgentID, "ok", coordinator)
 		response.Text = coordinator.Text
@@ -183,8 +349,16 @@ func (a *businessAPI) runAssistantQuery(ctx context.Context, request assistantQu
 	return response
 }
 
-func (a *businessAPI) sendAssistantAgent(ctx context.Context, agentID, sessionKey, message string, sources, allowlist []string) (orchestrator.AgentMessageResult, error) {
-	return a.openClaw.service.SendAgentMessage(ctx, orchestrator.AgentMessageInput{AgentID: agentID, Message: message, SessionKey: sessionKey, Sources: sources, Allowlist: allowlist})
+func (a *businessAPI) sendAssistantAgent(ctx context.Context, agentID, model, sessionKey, message string, sources, allowlist []string, attachments []orchestrator.MessageAttachment) (orchestrator.AgentMessageResult, error) {
+	return a.openClaw.service.SendAgentMessage(ctx, orchestrator.AgentMessageInput{AgentID: agentID, Model: model, Message: message, SessionKey: sessionKey, Sources: sources, Allowlist: allowlist, Attachments: attachments})
+}
+
+func assistantAttachmentViews(attachments []orchestrator.MessageAttachment) []assistantAttachmentView {
+	views := make([]assistantAttachmentView, 0, len(attachments))
+	for _, attachment := range attachments {
+		views = append(views, assistantAttachmentView{Name: attachment.Name, Mime: attachment.Mime, Size: attachment.Size})
+	}
+	return views
 }
 
 func (a *businessAPI) runDomainAgents(ctx context.Context, request assistantQueryRequest, requestID, knowledgeSummary string, agentIDs []string) []assistantAgentOutput {
@@ -197,7 +371,7 @@ func (a *businessAPI) runDomainAgents(ctx context.Context, request assistantQuer
 		go func(index int, agentID string) {
 			defer group.Done()
 			prompt := fmt.Sprintf("[STA-100 页面] %s / %s\n[用户输入]\n%s\n\n[Knowledge Agent 本地证据摘要]\n%s\n\n请只从你的专业职责给出结果，保留证据和不确定性。冲突数据不要覆盖。", request.Page, request.Feature, request.Message, knowledgeSummary)
-			result, err := a.sendAssistantAgent(ctx, agentID, assistantStageSession(request.SessionKey, agentID), prompt, []string{"本地业务数据库", "客户私有知识库", "联网检索"}, preferences.AgentAllowlists[agentID])
+			result, err := a.sendAssistantAgent(ctx, agentID, request.Model, assistantStageSession(request.SessionKey, agentID), prompt, []string{"本地业务数据库", "客户私有知识库", "联网检索"}, preferences.AgentAllowlists[agentID], request.Attachments)
 			if err != nil {
 				a.recordTokenUsage(ctx, requestID, request.Page, request.Feature, "domain-agent", agentID, "failed", result)
 				outputs[index] = assistantOutputFromResult(agentID, result, assistantErrorText(err))
@@ -337,14 +511,27 @@ func detectEvidenceConflicts(evidence []assistantEvidence) []map[string]any {
 	return conflicts
 }
 
-func localAssistantSummary(request assistantQueryRequest, items []map[string]any, evidence []assistantEvidence, outputs []assistantAgentOutput) string {
+func localAssistantSummary(request assistantQueryRequest, items []map[string]any, evidence []assistantEvidence, outputs []assistantAgentOutput, coordinatorError string) string {
 	successful := 0
+	failed := make([]string, 0)
 	for _, output := range outputs {
 		if output.Error == "" {
 			successful++
+		} else {
+			failed = append(failed, fmt.Sprintf("%s：%s", output.AgentID, output.Error))
 		}
 	}
-	return fmt.Sprintf("已从本机业务数据库检索到 %d 条证据和 %d 条可展示记录，%d 个领域 Agent 返回了结果。最终协调 Agent 暂不可用，因此当前为部分结果；请结合证据记录编号和更新时间人工复核。", len(evidence), len(items), successful)
+	parts := []string{fmt.Sprintf("已从本机业务数据库检索到 %d 条证据和 %d 条可展示记录，%d 个领域 Agent 返回了结果。", len(evidence), len(items), successful)}
+	if len(failed) > 0 {
+		parts = append(parts, "领域 Agent 未返回原因："+strings.Join(failed, "；"))
+	}
+	if strings.TrimSpace(coordinatorError) != "" {
+		parts = append(parts, "最终协调 Agent 未完成原因："+coordinatorError)
+	} else {
+		parts = append(parts, "最终协调 Agent 未完成，当前为部分结果。")
+	}
+	parts = append(parts, "请结合证据记录编号和更新时间人工复核。")
+	return strings.Join(parts, "")
 }
 
 func normalizedFeature(value string) string {
@@ -417,13 +604,24 @@ func assistantErrorText(err error) string {
 	if err == nil {
 		return ""
 	}
+	detail := strings.ToLower(err.Error())
 	switch {
-	case err == context.DeadlineExceeded:
+	case errors.Is(err, context.DeadlineExceeded):
 		return "OpenClaw 调用超时"
-	case strings.Contains(err.Error(), "agent unavailable"):
+	case strings.Contains(detail, "agent unavailable"):
 		return "Agent 尚未同步到 OpenClaw"
+	case strings.Contains(detail, "selected model was not found"), strings.Contains(detail, "model was not found"), strings.Contains(detail, "model not found"), strings.Contains(detail, "no access to model"):
+		return "所选模型在供应商侧不存在或当前 API Key 无权使用，请在设置中更换已测试通过的模型"
+	case strings.Contains(detail, "authentication"), strings.Contains(detail, "invalid api key"), strings.Contains(detail, "unauthorized"):
+		return "模型提供商鉴权失败，请检查 API Key 是否有效"
+	case strings.Contains(detail, "insufficient balance"), strings.Contains(detail, "quota exceeded"), strings.Contains(detail, "余额不足"):
+		return "模型提供商账户余额或额度不足"
+	case strings.Contains(detail, "rate limit"), strings.Contains(detail, "too many requests"), strings.Contains(detail, "限流"):
+		return "模型提供商触发限流，请稍后重试"
+	case strings.Contains(detail, "failovererror"):
+		return "OpenClaw 模型调用失败，请检查默认模型、候选模型和供应商配置"
 	default:
-		return "OpenClaw 调用失败"
+		return "OpenClaw 调用失败：" + strings.TrimSpace(err.Error())
 	}
 }
 

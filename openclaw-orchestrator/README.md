@@ -50,13 +50,15 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
 |---|---|---|
 | GET | `/health` | 编排器健康检查 |
 | GET | `/v1/status` | Gateway、RPC 和配置审计状态 |
-| GET | `/v1/models` | 默认模型、可用模型和非敏感凭据状态 |
+| GET | `/v1/models` | 固定 OpenClaw 版本模型目录、默认模型和非敏感凭据状态 |
 | PUT | `/v1/models/default` | 校验可用模型后切换默认模型 |
 | POST | `/v1/models/auth` | 通过 stdin 写入 API Key，不回显密钥 |
 | GET | `/v1/agents` | 读取 Agent 公共字段 |
 | POST | `/v1/agents/sync` | 按调用方 manifest 幂等创建/校正 Agent |
 
 写接口要求 `X-OpenClaw-Operator-Request: 1`。HTTP 服务默认只监听 `127.0.0.1`，部署到其它地址前必须由上层网关提供认证和访问控制。
+
+模型目录固定对应 OpenClaw `2026.7.1-2`，包含 20 个 API Key 提供商和 106 个文本模型；读取目录时不调用 `models list`，只调用 `models status` 获取当前默认模型和凭据状态。升级 OpenClaw 时必须同步更新 `orchestrator/model_catalog.go`。
 
 ## Manifest
 

@@ -2,10 +2,12 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +33,7 @@ func defaultPreferences() UserPreferences {
 		NewsTopics:            "E-bike、智能骑行、经销商、欧盟法规",
 		NewsSources:           "EUR-Lex\nBike Europe\nCycling Industry News\nEurobike",
 		AgentAllowlists:       map[string][]string{},
+		AgentModelOverrides:   map[string]string{},
 	}
 }
 
@@ -911,8 +914,18 @@ func (a *businessAPI) updateJob(w http.ResponseWriter, r *http.Request, id strin
 	if strings.TrimSpace(request.Schedule) == "" {
 		request.Schedule = item.Schedule
 	}
+	if strings.TrimSpace(request.Description) == "" {
+		request.Description = item.Description
+	}
+	if strings.TrimSpace(request.AgentID) == "" {
+		request.AgentID = item.AgentID
+	}
+	if strings.TrimSpace(request.Prompt) == "" {
+		request.Prompt = item.Prompt
+	}
 	request.LastRun = firstNonEmpty(request.LastRun, item.LastRun)
 	request.NextRun = firstNonEmpty(request.NextRun, item.NextRun)
+	request.LastResult = firstNonEmpty(request.LastResult, item.LastResult)
 	if err := a.store.put(r.Context(), "jobs", item.ID, request); err != nil {
 		writeBusinessError(w, err)
 		return
@@ -954,6 +967,9 @@ func (a *businessAPI) settingsRouter(w http.ResponseWriter, r *http.Request, par
 	if request.AgentAllowlists == nil {
 		request.AgentAllowlists = map[string][]string{}
 	}
+	if request.AgentModelOverrides == nil {
+		request.AgentModelOverrides = map[string]string{}
+	}
 	if err := a.store.putSetting(r.Context(), "preferences", request); err != nil {
 		writeBusinessError(w, err)
 		return
@@ -973,32 +989,175 @@ func (a *businessAPI) settingsModelRouter(w http.ResponseWriter, r *http.Request
 			return
 		}
 		started := time.Now()
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
-		status, err := a.openClaw.service.Status(ctx)
-		if err != nil {
-			writeOpenClawError(w, err)
+		var request struct {
+			Model          string   `json:"model"`
+			DefaultModel   string   `json:"defaultModel"`
+			Provider       string   `json:"provider"`
+			APIKey         string   `json:"apiKey"`
+			EndpointMode   string   `json:"endpointMode"`
+			SelectedModels []string `json:"selectedModels"`
+		}
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": status.RPCOK, "durationMs": time.Since(started).Milliseconds(), "version": status.Version})
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		response := map[string]any{
+			"ok": false, "gatewayOK": false, "configurationOK": false, "generationOK": false,
+			"testedAt": timeNowUTC(),
+		}
+		request.Model = strings.TrimSpace(request.Model)
+		request.DefaultModel = strings.TrimSpace(request.DefaultModel)
+		request.Provider = strings.TrimSpace(strings.ToLower(request.Provider))
+		request.EndpointMode = normalizeModelEndpointMode(request.EndpointMode)
+		if request.Model != "" {
+			modelProvider, _, found := strings.Cut(request.Model, "/")
+			if !found {
+				response["stage"] = "configuration"
+				response["message"] = "模型 ID 格式无效"
+				response["durationMs"] = time.Since(started).Milliseconds()
+				writeJSON(w, http.StatusOK, response)
+				return
+			}
+			if request.Provider == "" {
+				request.Provider = strings.ToLower(modelProvider)
+			}
+			if modelProvider != request.Provider {
+				response["stage"] = "configuration"
+				response["message"] = "模型与 API Key 提供商不一致，请重新选择"
+				response["durationMs"] = time.Since(started).Milliseconds()
+				writeJSON(w, http.StatusOK, response)
+				return
+			}
+			if request.APIKey != "" {
+				if _, err := a.openClaw.service.SaveAPIKey(ctx, request.Provider, request.APIKey); err != nil {
+					a.saveModelTestState(r.Context(), request.Model, false, modelTestFailureMessage(err, "API Key 写入 OpenClaw 失败"))
+					response["stage"] = "credential"
+					response["message"] = modelTestFailureMessage(err, "API Key 写入 OpenClaw 失败")
+					response["durationMs"] = time.Since(started).Milliseconds()
+					writeJSON(w, http.StatusOK, response)
+					return
+				}
+			}
+		}
+		if request.APIKey == "" && request.Provider != "" {
+			if savedAPIKey, err := a.openClaw.service.LoadAPIKey(ctx, request.Provider); err == nil {
+				request.APIKey = savedAPIKey
+			}
+		}
+		if request.Provider != "" {
+			if mode, baseURL, apply, err := resolveModelProviderEndpoint(request.Provider, request.EndpointMode, request.APIKey); err != nil {
+				a.saveModelTestState(r.Context(), request.Model, false, modelTestFailureMessage(err, "模型接入区域配置失败"))
+				response["stage"] = "endpoint"
+				response["message"] = modelTestFailureMessage(err, "模型接入区域配置失败")
+				response["durationMs"] = time.Since(started).Milliseconds()
+				writeJSON(w, http.StatusOK, response)
+				return
+			} else {
+				request.EndpointMode = mode
+				response["endpointMode"] = mode
+				response["providerBaseUrl"] = baseURL
+				if apply {
+					if err := a.openClaw.service.SetProviderBaseURL(request.Provider, baseURL); err != nil {
+						a.saveModelTestState(r.Context(), request.Model, false, modelTestFailureMessage(err, "模型接入区域写入 OpenClaw 失败"))
+						response["stage"] = "endpoint"
+						response["message"] = modelTestFailureMessage(err, "模型接入区域写入 OpenClaw 失败")
+						response["durationMs"] = time.Since(started).Milliseconds()
+						writeJSON(w, http.StatusOK, response)
+						return
+					}
+				}
+			}
+		}
+		models := a.openClaw.service.ModelSnapshot()
+		modelID := strings.TrimSpace(request.Model)
+		if modelID == "" {
+			modelID = strings.TrimSpace(models.ResolvedDefault)
+		}
+		if modelID == "" {
+			modelID = strings.TrimSpace(models.DefaultModel)
+		}
+		response["model"] = modelID
+		response["missingProviders"] = models.MissingProviders
+		response["configurationOK"] = modelID != "" && (models.Configured || request.Model != "")
+		if modelID == "" || (!models.Configured && request.Model == "") {
+			if request.Model != "" {
+				a.saveModelTestState(r.Context(), request.Model, false, "默认模型或对应提供商凭据尚未配置完整")
+			}
+			response["stage"] = "configuration"
+			response["message"] = "默认模型或对应提供商凭据尚未配置完整"
+			response["durationMs"] = time.Since(started).Milliseconds()
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		if request.Provider == "" {
+			request.Provider, _, _ = strings.Cut(modelID, "/")
+		}
+		if request.APIKey == "" && request.Provider != "" {
+			if savedAPIKey, err := a.openClaw.service.LoadAPIKey(ctx, request.Provider); err == nil {
+				request.APIKey = savedAPIKey
+			}
+		}
+		probeEndpoint, err := probeModelProvider(ctx, modelID, request.APIKey, request.EndpointMode, models.ProviderBaseURLs)
+		if err != nil {
+			message := modelTestFailureMessage(err, "模型 API Key 或模型权限真实调用验证失败")
+			a.saveModelTestState(r.Context(), modelID, false, message)
+			response["stage"] = "provider"
+			response["message"] = message
+			response["durationMs"] = time.Since(started).Milliseconds()
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		response["generationOK"] = true
+		response["providerProbe"] = probeEndpoint
+		response["durationMs"] = time.Since(started).Milliseconds()
+		response["ok"] = true
+		response["stage"] = "complete"
+		response["message"] = modelRealProbeSuccessMessage
+		a.store.audit(r.Context(), "test", "setting", "model", requestOperator(r), map[string]any{"model": modelID, "ok": true, "durationMs": response["durationMs"]})
+		a.saveModelTestState(r.Context(), modelID, true, modelRealProbeSuccessMessage)
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	if r.Method == http.MethodGet {
-		a.openClaw.modelsHandler(w, r)
+		models := a.openClaw.service.ModelSnapshot()
+		a.decorateModelTestStates(r.Context(), &models)
+		writeJSON(w, http.StatusOK, models)
 		return
 	}
 	if !allowMutation(w, r, http.MethodPatch) {
 		return
 	}
 	var request struct {
-		Model    string `json:"model"`
-		Provider string `json:"provider"`
-		APIKey   string `json:"apiKey"`
+		Model          string   `json:"model"`
+		DefaultModel   string   `json:"defaultModel"`
+		Provider       string   `json:"provider"`
+		APIKey         string   `json:"apiKey"`
+		EndpointMode   string   `json:"endpointMode"`
+		SelectedModels []string `json:"selectedModels"`
 	}
 	if err := decodeJSONBody(w, r, &request); err != nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	request.Model = strings.TrimSpace(request.Model)
+	request.DefaultModel = strings.TrimSpace(request.DefaultModel)
+	request.Provider = strings.TrimSpace(strings.ToLower(request.Provider))
+	request.EndpointMode = normalizeModelEndpointMode(request.EndpointMode)
+	if request.Model != "" {
+		modelProvider, _, found := strings.Cut(request.Model, "/")
+		if !found {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_MODEL", "模型 ID 格式无效")
+			return
+		}
+		if request.Provider == "" {
+			request.Provider = strings.ToLower(modelProvider)
+		}
+		if modelProvider != request.Provider {
+			writeAPIError(w, http.StatusBadRequest, "MODEL_PROVIDER_MISMATCH", "模型与 API Key 提供商不一致")
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	if request.APIKey != "" {
 		if _, err := a.openClaw.service.SaveAPIKey(ctx, request.Provider, request.APIKey); err != nil {
@@ -1006,19 +1165,418 @@ func (a *businessAPI) settingsModelRouter(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	if request.Model != "" {
-		if err := a.openClaw.service.SetDefaultModel(ctx, request.Model); err != nil {
+	if request.APIKey == "" && request.Provider != "" {
+		if savedAPIKey, err := a.openClaw.service.LoadAPIKey(ctx, request.Provider); err == nil {
+			request.APIKey = savedAPIKey
+		}
+	}
+	endpointMode, providerBaseURL, endpointApply, endpointErr := resolveModelProviderEndpoint(request.Provider, request.EndpointMode, request.APIKey)
+	if endpointErr != nil {
+		writeOpenClawError(w, endpointErr)
+		return
+	}
+	request.EndpointMode = endpointMode
+	if endpointApply {
+		if err := a.openClaw.service.SetProviderBaseURL(request.Provider, providerBaseURL); err != nil {
 			writeOpenClawError(w, err)
 			return
 		}
 	}
-	models, err := a.openClaw.service.Models(ctx)
-	if err != nil {
-		writeOpenClawError(w, err)
-		return
+	selectionDefault := firstNonEmpty(request.DefaultModel, request.Model)
+	selectedModels := normalizedSelectedModels(selectionDefault, append(request.SelectedModels, request.Model))
+	if request.SelectedModels != nil || selectionDefault != "" {
+		if len(selectedModels) == 0 {
+			if err := a.openClaw.service.ClearConfiguredModelSelection(); err != nil {
+				writeOpenClawError(w, err)
+				return
+			}
+		} else {
+			if request.DefaultModel != "" {
+				selectionDefault = request.DefaultModel
+			} else {
+				selectionDefault = selectedModels[0]
+			}
+			if err := a.openClaw.service.SetConfiguredModelSelection(selectionDefault, selectedModels); err != nil {
+				writeOpenClawError(w, err)
+				return
+			}
+		}
 	}
 	a.store.audit(r.Context(), "update", "setting", "model", requestOperator(r), map[string]any{"model": request.Model, "provider": request.Provider, "apiKeyUpdated": request.APIKey != ""})
-	writeJSON(w, http.StatusOK, models)
+	response := map[string]any{
+		"saved":           true,
+		"apiKeySaved":     request.APIKey != "",
+		"modelSet":        len(selectedModels) > 0,
+		"modelCount":      len(selectedModels),
+		"model":           request.Model,
+		"defaultModel":    selectionDefault,
+		"provider":        request.Provider,
+		"endpointMode":    endpointMode,
+		"providerBaseUrl": providerBaseURL,
+		"message":         "配置已保存。连通性和模型权限请点击“测试连通性”单独验证。",
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+type modelTestState struct {
+	OK           bool   `json:"ok"`
+	Message      string `json:"message"`
+	TestedAt     string `json:"testedAt"`
+	GenerationOK bool   `json:"generationOK,omitempty"`
+	Stage        string `json:"stage,omitempty"`
+}
+
+const modelRealProbeSuccessMessage = "API Key 已写入 OpenClaw，并完成真实模型调用验证"
+
+func (a *businessAPI) modelTestStates(ctx context.Context) map[string]modelTestState {
+	states := map[string]modelTestState{}
+	_ = a.store.getSetting(ctx, "model_test_states", &states)
+	return states
+}
+
+func (a *businessAPI) saveModelTestState(ctx context.Context, model string, ok bool, message string) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
+	states := a.modelTestStates(ctx)
+	states[model] = modelTestState{OK: ok, Message: message, TestedAt: timeNowUTC(), GenerationOK: ok && strings.Contains(message, "真实模型调用验证"), Stage: map[bool]string{true: "complete", false: "failed"}[ok]}
+	_ = a.store.putSetting(ctx, "model_test_states", states)
+}
+
+func (a *businessAPI) decorateModelTestStates(ctx context.Context, models *orchestrator.Models) {
+	states := a.modelTestStates(ctx)
+	for index := range models.Models {
+		if state, ok := states[models.Models[index].Key]; ok {
+			passed := modelTestStatePassed(state)
+			models.Models[index].LastTestStatus = map[bool]string{true: "passed", false: "failed"}[passed]
+			models.Models[index].LastTestMessage = modelTestStateMessage(state)
+			models.Models[index].LastTestAt = state.TestedAt
+		}
+	}
+	for index := range models.CatalogModels {
+		if state, ok := states[models.CatalogModels[index].Key]; ok {
+			passed := modelTestStatePassed(state)
+			models.CatalogModels[index].LastTestStatus = map[bool]string{true: "passed", false: "failed"}[passed]
+			models.CatalogModels[index].LastTestMessage = modelTestStateMessage(state)
+			models.CatalogModels[index].LastTestAt = state.TestedAt
+		}
+	}
+	for index := range models.ConfiguredModels {
+		if state, ok := states[models.ConfiguredModels[index].Key]; ok {
+			passed := modelTestStatePassed(state)
+			models.ConfiguredModels[index].LastTestStatus = map[bool]string{true: "passed", false: "failed"}[passed]
+			models.ConfiguredModels[index].LastTestMessage = modelTestStateMessage(state)
+			models.ConfiguredModels[index].LastTestAt = state.TestedAt
+		}
+	}
+}
+
+func (a *businessAPI) modelPreviouslyTestedOK(ctx context.Context, model string) bool {
+	state, ok := a.modelTestStates(ctx)[strings.TrimSpace(model)]
+	return ok && modelTestStatePassed(state)
+}
+
+func modelTestStatePassed(state modelTestState) bool {
+	return state.OK && (state.GenerationOK || strings.Contains(state.Message, "真实模型调用验证"))
+}
+
+func modelTestStateMessage(state modelTestState) string {
+	if state.OK && !modelTestStatePassed(state) {
+		return "历史测试只完成配置检查，未完成真实模型调用验证，请重新测试连通性"
+	}
+	return state.Message
+}
+
+func modelTestFailureMessage(err error, fallback string) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "真实模型调用超时，请检查网络、提供商服务或模型响应状态"
+	}
+	detail := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(detail, "api key is required"), strings.Contains(detail, "missing api key"), strings.Contains(detail, "api key 为空"):
+		return "该模型提供商没有可用 API Key，请先输入 API Key 后再测试"
+	case strings.Contains(detail, "probe unsupported"), strings.Contains(detail, "尚未接入真实探测"):
+		return "当前模型提供商尚未接入真实调用探测，不能标记为可用"
+	case strings.Contains(detail, "insufficient balance"), strings.Contains(detail, "insufficient_balance"), strings.Contains(detail, "余额不足"), strings.Contains(detail, "quota exceeded"):
+		return "模型提供商账户余额或额度不足，请充值或更换有额度的凭据"
+	case strings.Contains(detail, "unauthorized"), strings.Contains(detail, "invalid api key"), strings.Contains(detail, "invalid_api_key"), strings.Contains(detail, "authentication"), strings.Contains(detail, "鉴权"):
+		return "模型提供商鉴权失败，请重新检查并更新 API Key"
+	case strings.Contains(detail, "rate limit"), strings.Contains(detail, "rate_limit"), strings.Contains(detail, "too many requests"), strings.Contains(detail, "限流"):
+		return "模型提供商当前触发限流，请稍后重试或检查账户并发限制"
+	case strings.Contains(detail, "selected model was not found"), strings.Contains(detail, "model was not found"), strings.Contains(detail, "model not found"), strings.Contains(detail, "model_not_found"), strings.Contains(detail, "no access to model"), strings.Contains(detail, "permission"):
+		return "当前凭据无权使用所选模型，或模型 ID 已失效"
+	case strings.Contains(detail, "network"), strings.Contains(detail, "connection"), strings.Contains(detail, "econn"), strings.Contains(detail, "dns"):
+		return "无法连接模型提供商，请检查设备网络、DNS 和联网策略"
+	}
+	return fallback
+}
+
+func normalizedSelectedModels(defaultModel string, selected []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(selected)+1)
+	add := func(model string) {
+		model = strings.TrimSpace(model)
+		if model == "" || seen[model] {
+			return
+		}
+		seen[model] = true
+		result = append(result, model)
+	}
+	add(defaultModel)
+	for _, model := range selected {
+		add(model)
+	}
+	return result
+}
+
+func normalizeModelEndpointMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "domestic", "cn", "china", "mainland", "国内":
+		return "domestic"
+	case "international", "global", "overseas", "国外", "国际":
+		return "international"
+	default:
+		return "auto"
+	}
+}
+
+func resolveModelProviderEndpoint(provider, endpointMode, apiKey string) (string, string, bool, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	mode := normalizeModelEndpointMode(endpointMode)
+	if provider != "minimax" {
+		return mode, "", false, nil
+	}
+	switch mode {
+	case "domestic":
+		return mode, "https://api.minimaxi.com/anthropic", true, nil
+	case "international":
+		return mode, "https://api.minimax.io/anthropic", true, nil
+	default:
+		if strings.HasPrefix(strings.TrimSpace(apiKey), "sk-cp-") {
+			return "domestic", "https://api.minimaxi.com/anthropic", true, nil
+		}
+		return "auto", "", false, nil
+	}
+}
+
+type modelProbeRequest struct {
+	provider string
+	model    string
+	apiKey   string
+	baseURLs []string
+	kind     string
+}
+
+func probeModelProvider(ctx context.Context, modelID, apiKey, endpointMode string, providerBaseURLs map[string]string) (string, error) {
+	provider, modelName, found := strings.Cut(strings.TrimSpace(modelID), "/")
+	if !found || strings.TrimSpace(modelName) == "" {
+		return "", orchestrator.ErrInvalidModel
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return "", fmt.Errorf("api key is required for %s", provider)
+	}
+	request, err := modelProbeTarget(provider, modelName, apiKey, endpointMode, providerBaseURLs)
+	if err != nil {
+		return "", err
+	}
+	var lastErr error
+	for _, baseURL := range request.baseURLs {
+		switch request.kind {
+		case "openai":
+			if err := probeOpenAICompatibleModel(ctx, request, baseURL); err != nil {
+				lastErr = err
+				continue
+			}
+		case "anthropic":
+			if err := probeAnthropicModel(ctx, request, baseURL); err != nil {
+				lastErr = err
+				continue
+			}
+		case "anthropic-bearer":
+			if err := probeAnthropicBearerModel(ctx, request, baseURL); err != nil {
+				lastErr = err
+				continue
+			}
+		case "cohere":
+			if err := probeCohereModel(ctx, request, baseURL); err != nil {
+				lastErr = err
+				continue
+			}
+		default:
+			return "", fmt.Errorf("probe unsupported provider %s", provider)
+		}
+		return baseURL, nil
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("probe unsupported provider %s: 尚未接入真实探测", provider)
+}
+
+func modelProbeTarget(provider, modelName, apiKey, endpointMode string, providerBaseURLs map[string]string) (modelProbeRequest, error) {
+	request := modelProbeRequest{provider: provider, model: modelName, apiKey: apiKey, kind: "openai"}
+	if baseURL := strings.TrimSpace(providerBaseURLs[provider]); baseURL != "" {
+		if provider == "minimax" {
+			request.kind = "anthropic-bearer"
+			baseURL = normalizeMinimaxAnthropicBaseURL(baseURL)
+		}
+		request.baseURLs = []string{strings.TrimRight(baseURL, "/")}
+		return request, nil
+	}
+	switch provider {
+	case "deepseek":
+		request.baseURLs = []string{"https://api.deepseek.com", "https://api.deepseek.com/v1"}
+	case "minimax":
+		request.kind = "anthropic-bearer"
+		request.baseURLs = minimaxProbeBaseURLs(apiKey, endpointMode)
+	case "mistral":
+		request.baseURLs = []string{"https://api.mistral.ai/v1"}
+	case "moonshot":
+		request.baseURLs = []string{"https://api.moonshot.cn/v1"}
+	case "novita":
+		request.baseURLs = []string{"https://api.novita.ai/v3/openai"}
+	case "nvidia":
+		request.baseURLs = []string{"https://integrate.api.nvidia.com/v1"}
+	case "together":
+		request.baseURLs = []string{"https://api.together.xyz/v1"}
+	case "volcengine", "volcengine-plan":
+		request.baseURLs = []string{"https://ark.cn-beijing.volces.com/api/v3"}
+	case "byteplus", "byteplus-plan":
+		request.baseURLs = []string{"https://ark.ap-southeast.bytepluses.com/api/v3"}
+	case "anthropic":
+		request.kind = "anthropic"
+		request.baseURLs = []string{"https://api.anthropic.com"}
+	case "cohere":
+		request.kind = "cohere"
+		request.baseURLs = []string{"https://api.cohere.com"}
+	default:
+		return request, fmt.Errorf("probe unsupported provider %s: 尚未接入真实探测", provider)
+	}
+	return request, nil
+}
+
+func minimaxProbeBaseURLs(apiKey, endpointMode string) []string {
+	hosts := []string{"https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic"}
+	switch normalizeModelEndpointMode(endpointMode) {
+	case "domestic":
+		hosts = []string{"https://api.minimaxi.com/anthropic"}
+	case "international":
+		hosts = []string{"https://api.minimax.io/anthropic"}
+	default:
+		if strings.HasPrefix(strings.TrimSpace(apiKey), "sk-cp-") {
+			hosts = []string{"https://api.minimaxi.com/anthropic", "https://api.minimax.io/anthropic"}
+		}
+	}
+	return hosts
+}
+
+func normalizeMinimaxAnthropicBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return baseURL
+	}
+	if strings.HasSuffix(baseURL, "/v1") {
+		baseURL = strings.TrimSuffix(baseURL, "/v1")
+	}
+	if strings.HasSuffix(baseURL, "/anthropic") {
+		return baseURL
+	}
+	return baseURL + "/anthropic"
+}
+
+func probeOpenAICompatibleModel(ctx context.Context, request modelProbeRequest, baseURL string) error {
+	payload := map[string]any{
+		"model":      request.model,
+		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+		"max_tokens": 1,
+		"stream":     false,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postModelProbe(ctx, baseURL, "/chat/completions", data, map[string]string{
+		"Authorization": "Bearer " + request.apiKey,
+	})
+}
+
+func probeAnthropicModel(ctx context.Context, request modelProbeRequest, baseURL string) error {
+	payload := map[string]any{
+		"model":      request.model,
+		"max_tokens": 1,
+		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postModelProbe(ctx, baseURL, "/v1/messages", data, map[string]string{
+		"x-api-key":         request.apiKey,
+		"anthropic-version": "2023-06-01",
+	})
+}
+
+func probeAnthropicBearerModel(ctx context.Context, request modelProbeRequest, baseURL string) error {
+	payload := map[string]any{
+		"model":      request.model,
+		"max_tokens": 1,
+		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postModelProbe(ctx, baseURL, "/v1/messages", data, map[string]string{
+		"Authorization":     "Bearer " + request.apiKey,
+		"anthropic-version": "2023-06-01",
+	})
+}
+
+func probeCohereModel(ctx context.Context, request modelProbeRequest, baseURL string) error {
+	payload := map[string]any{
+		"model":      request.model,
+		"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+		"max_tokens": 1,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postModelProbe(ctx, baseURL, "/v2/chat", data, map[string]string{
+		"Authorization": "Bearer " + request.apiKey,
+	})
+}
+
+func postModelProbe(ctx context.Context, baseURL, path string, data []byte, headers map[string]string) error {
+	client := &http.Client{Timeout: 10 * time.Second}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return fmt.Errorf("probe endpoint is empty")
+	}
+	if strings.HasSuffix(baseURL, "/chat/completions") || strings.HasSuffix(baseURL, "/v1/messages") || strings.HasSuffix(baseURL, "/v2/chat") {
+		path = ""
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	if resp.StatusCode < 400 {
+		return nil
+	}
+	return fmt.Errorf("provider probe failed via %s: %s: %s", baseURL, resp.Status, strings.TrimSpace(string(body)))
 }
 
 func (a *businessAPI) systemRouter(w http.ResponseWriter, r *http.Request, parts []string) {
