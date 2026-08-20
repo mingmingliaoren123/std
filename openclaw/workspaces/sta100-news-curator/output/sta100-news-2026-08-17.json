@@ -1,0 +1,62 @@
+{
+  "fetched_at": "2026-08-17T16:14+08:00",
+  "source": "Bike Europe (bike-eu.com)",
+  "filters": {"countries": ["Germany", "France"], "topics": ["E-bike", "cycling industry"]},
+  "items": [
+    {
+      "category": "E-bike / 德国市场",
+      "title": "Velo de Ville 总经理 Volker Thiemann: '当今电助力自行车的法律地位受到威胁'",
+      "summary": "德国 Altenberge 的电助力自行车品牌 Velo de Ville 超过 80% 的产量为电助力车型。总经理兼所有者 Volker Thiemann 对市场持积极态度，但同时担忧近期技术发展在他看来威胁到当今电助力车的生存空间。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52844/velo-de-ville-gm-volker-thiemann-the-legal-status-of-todays-e-bike-is-at-risk",
+      "time": "2026-08 (近期)",
+      "relevance": "高 — 德国品牌 + 电助力车核心议题"
+    },
+    {
+      "category": "行业市场 / 德国",
+      "title": "ZIV 经销商数据看板上线,德国自行车销售透明度提升",
+      "summary": "德国自行车行业协会 ZIV 的市场数据中央分析工具正式上线,参与的德国自行车经销商可访问经销商看板。ZIV 工业与经济政策负责人 Katharina Hinse 表示这是德国自行车市场透明度的重要一步,也是整个行业商业规划的重要里程碑。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52835/transparency-in-german-bicycle-sales-as-ziv-dealer-dashboard-now-live",
+      "time": "2026-08 (近期)",
+      "relevance": "高 — 德国 + 骑行行业市场数据"
+    },
+    {
+      "category": "展会与品牌 / 法国",
+      "title": "Pro-Days 显示法国自行车市场下滑中仍具韧性",
+      "summary": "法国 Pro-Days 展会信号表明,在整体下滑的法国自行车市场中,行业仍展现出韧性。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52849/pro-days-signals-resilience-in-frances-declining-cycling-market",
+      "time": "2026-07~08",
+      "relevance": "高 — 法国 + 骑行行业市场动态"
+    },
+    {
+      "category": "企业重组 / 法国",
+      "title": "Lapierre 在法国申请司法重整,与 Raleigh 各自寻求重组路径",
+      "summary": "Accell Group 在荷兰获得付款暂停后,其国际子公司各自掌控命运。法国 Cycles Lapierre 已申请司法重整,英国和爱尔兰子公司 Accell UK & Ireland (Raleigh) 已发出任命管理人的通知。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52945/lapierre-and-raleigh-seek-separate-restructuring-paths-following-accell-insolvency",
+      "time": "2026-08 (近期)",
+      "relevance": "高 — 法国品牌 + 行业重大重组事件"
+    },
+    {
+      "category": "企业动态 / 德国",
+      "title": "Canyon 创始人 Roman Arnold 出席 Eurobike:仍按自己的方式做事",
+      "summary": "德国直销品牌 Canyon 在 Eurobike 2026 占据 11 号馆中心位置,创始人 Roman Arnold (2025 年 9 月起担任执行主席) 表示: '我们要展示自接手运营以来团队的努力成果'。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52799/canyon-owner-roman-arnold-is-still-doing-things-his-own-way",
+      "time": "2026-06~07 (Eurobike 期间)",
+      "relevance": "中-高 — 德国品牌 + 行业展会"
+    },
+    {
+      "category": "行业市场 / 全欧(含德法)",
+      "title": "欧洲自行车市场趋稳,本地零部件生产失地",
+      "summary": "欧洲自行车行业继续向更平衡、需求驱动的市场过渡。2025 年数据显示行业正在企稳,ECI 首席执行官 Paul Walsh 在 2026 BIMP 报告发布会上表示: '这是 COVID 之后库存问题终于结束的一个信号'。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52916/european-bicycle-market-stabilises-while-local-component-production-loses-ground",
+      "time": "2026-08 (近期)",
+      "relevance": "中 — 全欧行业总览,德法为重要市场"
+    }
+  ],
+  "notes": "文章具体页面需登录方可阅读全文,以上摘要均来自 Bike Europe 首页公开摘要。时间字段为基于文章 ID 顺序与首页位置的合理近似,非精确发布时间。原始发布日期请以原文页为准。"
+}

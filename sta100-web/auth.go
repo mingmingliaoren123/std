@@ -25,6 +25,15 @@ const (
 	passwordRounds = 150000
 )
 
+func authRequired() bool {
+	value := strings.TrimSpace(os.Getenv("STA100_REQUIRE_AUTH"))
+	if value == "" {
+		return false
+	}
+	enabled, err := strconv.ParseBool(value)
+	return err == nil && enabled
+}
+
 type authManager struct {
 	mu       sync.Mutex
 	path     string
@@ -150,6 +159,9 @@ func (a *authManager) statusHandler(w http.ResponseWriter, r *http.Request) {
 	username := a.username
 	a.mu.Unlock()
 	_, authenticated := a.sessionUsername(r)
+	if !authRequired() {
+		authenticated = true
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": authenticated, "username": username})
 }
 
@@ -325,6 +337,15 @@ func (a *authManager) sessionUsername(r *http.Request) (string, bool) {
 
 func (a *authManager) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !authRequired() {
+			username := strings.TrimSpace(a.username)
+			if username == "" {
+				username = "admin"
+			}
+			ctx := context.WithValue(r.Context(), authUsernameContextKey{}, username)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		username, ok := a.sessionUsername(r)
 		if !ok {
 			writeAPIError(w, http.StatusUnauthorized, "AUTH_REQUIRED", "请先登录 STA-100")

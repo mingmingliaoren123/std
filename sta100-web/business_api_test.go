@@ -199,7 +199,10 @@ func TestCustomerDiscoveryDoesNotSubstituteUnmatchedLocalCustomer(t *testing.T) 
 	request := assistantQueryRequest{Feature: "customer-discovery", Context: map[string]any{
 		"country": "德国", "city": "柏林", "type": "Distributor",
 	}}
-	evidence := api.collectLocalEvidence(context.Background(), assistantQueryRequest{Message: "德国 客户"})
+	evidence := api.collectLocalEvidence(context.Background(), request)
+	if len(evidence) != 0 {
+		t.Fatalf("discovery must not read local evidence: %+v", evidence)
+	}
 	if items := api.localAssistantItems(request, evidence); len(items) != 0 {
 		t.Fatalf("unmatched discovery returned local customer: %+v", items)
 	}
@@ -270,7 +273,6 @@ func TestRawDataDependentEndpointsAreExplicitTODO(t *testing.T) {
 	}{
 		{"/api/v1/overview/oem/match", map[string]any{"query": "battery"}},
 		{"/api/v1/overview/customer-discovery", map[string]any{"country": "德国", "city": "柏林", "type": "Distributor"}},
-		{"/api/v1/news/refresh", map[string]any{}},
 		{"/api/v1/templates/upload", map[string]any{}},
 		{"/api/v1/system/upgrade/import", map[string]any{}},
 	} {
@@ -370,6 +372,19 @@ func TestExcelExportsAreXLSX(t *testing.T) {
 
 func TestCollectionPatchRoutes(t *testing.T) {
 	api, _ := newTestBusinessAPI(t)
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "openclaw")
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2" in
+  "cron add") printf '%s' '{"job":{"id":"oc-test","name":"每日推荐更新","description":"test","enabled":false,"agentId":"sta100-recommend-curator","sessionTarget":"isolated","schedule":{"kind":"every","everyMs":7200000},"payload":{"kind":"agentTurn","message":"test"},"state":{},"status":"disabled"}}' ;;
+  *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	api.openClaw = &openClawService{service: orchestrator.New(orchestrator.Config{BinaryPath: scriptPath})}
 	job := Job{ID: "JOB-RECOMMEND", Enabled: false, Schedule: "每 2 小时"}
 	updatedJob := businessRequest(t, api, http.MethodPatch, "/api/v1/jobs", job)
 	if updatedJob.Code != http.StatusOK {
@@ -379,6 +394,13 @@ func TestCollectionPatchRoutes(t *testing.T) {
 	updatedPlugin := businessRequest(t, api, http.MethodPatch, "/api/v1/plugins", plugin)
 	if updatedPlugin.Code != http.StatusOK {
 		t.Fatalf("plugins collection patch = %d: %s", updatedPlugin.Code, updatedPlugin.Body.String())
+	}
+}
+
+func TestOverviewAutomationMessageSeparatesFailedAndReviewCounts(t *testing.T) {
+	message := overviewAutomationMessage("failed", 2, 1, "")
+	if !strings.Contains(message, "1 个自动任务执行失败") || !strings.Contains(message, "1 个任务需要人工复核") {
+		t.Fatalf("message did not separate failed and review counts: %q", message)
 	}
 }
 
@@ -428,7 +450,6 @@ func TestDesignTODOAliasesDoNotFallThroughTo404(t *testing.T) {
 		"/api/v1/overview/oem-matches",
 		"/api/v1/overview/oem-matches/export",
 		"/api/v1/overview/oem-matches/FACTORY-1",
-		"/api/v1/news/refresh",
 		"/api/v1/templates/upload",
 		"/api/v1/system/upgrade/import",
 		"/api/v1/products/import",

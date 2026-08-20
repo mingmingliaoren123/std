@@ -219,6 +219,15 @@ func (s *businessStore) softDelete(ctx context.Context, kind, id string) error {
 	return nil
 }
 
+func (s *businessStore) softDeleteKind(ctx context.Context, kind string) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.ExecContext(ctx, `UPDATE records SET deleted_at=?,updated_at=? WHERE kind=? AND deleted_at IS NULL`, now, now, kind)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *businessStore) nextSequence(ctx context.Context, kind, prefix string, width int) (string, error) {
 	var count int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM records WHERE kind=?`, kind).Scan(&count); err != nil {

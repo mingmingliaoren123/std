@@ -1,0 +1,56 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "news",
+  "items": [
+    {
+      "category": "欧洲市场",
+      "title": "法国自行车市场2025年全面下滑 电助力自行车销量骤降16%",
+      "summary": "Bike Europe披露2025年法国市场销量降6%、营收降4.8%，E-bike销量大幅萎缩16%。",
+      "content": "Bike Europe在其市场报告栏目中披露，2025年法国自行车市场所有关键指标均为负数：总销量同比下滑6%，行业营收同比下降4.8%，平均零售价小幅下移，电助力自行车销量大幅萎缩16%。Bike Europe指出，这种收缩一方面来自宏观经济环境疲软，另一方面也反映了后疫情追补需求的结束以及政府购车补贴的退坡，意味着法国E-bike市场进入了结构性调整期，对在法销售的中国品牌、欧洲本土品牌以及经销商的库存周转与定价策略都构成新压力。建议复核法国财政部、国家统计局及各大法国行业协会如Union Sport & Cycle的原始数据，并结合经销商网络反馈评估2026年下半年是否会出现拐点。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52221/french-bike-market-declines-in-2025-as-e-bike-sales-slow-sharply",
+      "time": "2026-07",
+      "relevance": "高——直接覆盖关注国家法国与关注主题E-bike，给出官方渠道披露的销量与营收数据。"
+    },
+    {
+      "category": "行业资讯",
+      "title": "法国Lapierre向法院申请司法重整 与英国Raleigh各自寻求重组路径",
+      "summary": "在Accell荷兰总部破产保护之后，法国子公司Lapierre申请司法重整，英国Raleigh亦通知拟任管理人。",
+      "content": "Bike Europe于2026年8月7日报道，荷兰Accell集团及其荷兰子公司被阿姆斯特丹法院撤销暂停付款令并宣告破产之后，其国际子公司正各自寻找出路。法国子公司Cycles Lapierre已经向法院提交司法重整申请，启动独立的重组程序；与此同时，英国及爱尔兰业务Accell UK & Ireland（Raleigh）亦已发出拟任命管理人的通知。Lapierre是法国本土历史悠久的山地车与电助力自行车品牌，重整将直接影响法国本土制造、当地经销商体系以及品牌赞助的职业车队，对欧洲E-bike与运动自行车板块具有连锁影响。建议复核Lapierre管理层公开声明、法国商业法院公告以及Accell债权人委员会的进一步披露，确认重整方案、潜在买家与员工安置等细节。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52945/lapierre-and-raleigh-seek-separate-restructuring-paths-following-accell-insolvency",
+      "time": "2026-08-07",
+      "relevance": "高——直接覆盖法国，且为Accell集团破产事件的法国端关键节点，对法国自行车与E-bike产业有实质冲击。"
+    },
+    {
+      "category": "渠道",
+      "title": "德国ZIV经销商数据仪表盘正式上线 提升自行车零售透明度",
+      "summary": "德国ZIV市场数据服务核心分析工具上线，参与经销商可实时查看本地销售仪表盘。",
+      "content": "Bike Europe在其市场数据栏目中报道，德国自行车行业协会ZIV的中央分析工具已正式启动，参与其中的德国自行车经销商现可通过仪表盘访问ZIV的市场数据服务。ZIV产业与经济政策负责人Katharina Hinse表示，这是提升德国自行车市场透明度、为业务规划提供重要里程碑的关键一步，对整个行业的库存、采购与渠道策略都将产生正向影响。该仪表盘有望成为德国E-bike与普通自行车零售端的高频决策依据，便于品牌方、进口商与经销商观察真实销量与库存周期。建议复核ZIV官方公告、参与经销商范围与数据更新频率，并与ZIV既有的年度行业报告交叉验证，关注E-bike细分品类的占比与平均售价口径。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52835/transparency-in-german-bicycle-sales-as-ziv-dealer-dashboard-now-live",
+      "time": "2026-07",
+      "relevance": "高——直接覆盖关注国家德国与关注主题骑行行业，ZIV是德国自行车行业最权威的行业协会。"
+    },
+    {
+      "category": "法规",
+      "title": "Velo de Ville总经理Thiemann警告 当下电助力自行车的法律地位面临风险",
+      "summary": "德国Velo de Ville总经理Thiemann表示，电助力自行车当下法律地位受到新技术冲击，行业生存空间被挤压。",
+      "content": "Bike Europe在受访栏目中报道，德国电助力自行车制造商Velo de Ville总经理兼所有者Volker Thiemann接受访谈时指出，E-bike在其位于德国阿尔滕贝格的工厂产量中占比已超过80%，公司整体仍对市场保持乐观，但他同时警告，近期部分技术发展趋势在他看来可能危及当下电助力自行车的法律地位与生存空间，相关法规与产品边界需要尽快厘清。这一表态处于欧洲E-bike法规与市场分类持续讨论的关键节点，对依赖电助力车款业务的整车厂、上游电机与电池供应商以及德国认证机构都将带来政策风险信号。建议复核Velo de Ville官方资料、Thiemann完整访谈原文，以及欧盟与德国针对电助力自行车、Speed Pedelec的最新立法草案，确认其所谓\"新技术\"的具体指向。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52844/velo-de-ville-gm-volker-thiemann-the-legal-status-of-todays-e-bike-is-at-risk",
+      "time": "2026-07",
+      "relevance": "高——覆盖关注国家德国与关注主题E-bike，且明确触及法规与产品边界这一行业关注焦点。"
+    },
+    {
+      "category": "行业资讯",
+      "title": "Raymon Bicycles回归创始人所有 不到三年重拾增长轨道",
+      "summary": "Raymon品牌创始夫妇2023年从Pierer Mobility手中回购品牌，2026年宣布销售增长与库存去化双线好转。",
+      "content": "Bike Europe于2026年8月18日报道，品牌创始人Susanne Puello与Felix Puello于2023年10月在Pierer Mobility剥离Raymon Bicycles之际重新接管品牌，结束Pierer在自行车领域的不成功尝试。不到三年时间，创始人方面表示\"重整正在奏效\"，销售出现增长，库存同步去化，品牌重新回到增长轨道。这一管理层收购案对德国与欧洲E-bike与运动自行车板块的样本意义明显，提示行业在Pierer系整合失败后出现由原始创业者接手并实现回血的典型路径，对当前关注德国E-bike创业生态、并购估值与渠道库存周期的行业人士具备参考价值。建议复核Raymon的渠道分布、欧洲市场份额数据以及创始人对2026年下半年订单与产品线的进一步披露。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52994/raymon-bicycles-back-on-growth-track-under-founder-ownership",
+      "time": "2026-08-18",
+      "relevance": "中——覆盖关注国家德国与关注主题骑行行业，但是单一品牌叙事，行业层级影响相对有限，需结合ZIV等行业数据进行二次确认。"
+    }
+  ]
+}

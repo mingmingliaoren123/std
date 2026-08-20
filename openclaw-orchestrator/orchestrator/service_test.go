@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -171,6 +172,53 @@ func TestConfiguredModelSelectionDoesNotRequireCredentialAndRegistersMiniMaxMode
 	}
 }
 
+func TestConfigureWebSearchForMiniMaxModelProvider(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"profile":"coding"},"models":{"providers":{"minimax":{"baseUrl":"https://api.minimaxi.com/anthropic"}}},"plugins":{"entries":{"minimax":{"enabled":true}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := New(Config{ConfigPath: configPath})
+	if err := service.ConfigureWebSearchForModelProvider(context.Background(), "minimax", "sk-valid-minimax-key"); err != nil {
+		t.Fatalf("ConfigureWebSearchForModelProvider() error = %v", err)
+	}
+	var config struct {
+		Tools struct {
+			Profile string `json:"profile"`
+			Web     struct {
+				Search struct {
+					Enabled  bool   `json:"enabled"`
+					Provider string `json:"provider"`
+				} `json:"search"`
+			} `json:"web"`
+		} `json:"tools"`
+		Plugins struct {
+			Entries map[string]struct {
+				Enabled bool `json:"enabled"`
+				Config  struct {
+					WebSearch struct {
+						APIKey string `json:"apiKey"`
+					} `json:"webSearch"`
+				} `json:"config"`
+			} `json:"entries"`
+		} `json:"plugins"`
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(contents, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Tools.Profile != "coding" || !config.Tools.Web.Search.Enabled || config.Tools.Web.Search.Provider != "minimax" {
+		t.Fatalf("web search config not enabled correctly: %+v", config.Tools)
+	}
+	minimax := config.Plugins.Entries["minimax"]
+	if !minimax.Enabled || minimax.Config.WebSearch.APIKey != "sk-valid-minimax-key" {
+		t.Fatalf("minimax webSearch config not written correctly: %+v", minimax)
+	}
+}
+
 func TestChannelsReturnPinnedCatalogWithoutCLI(t *testing.T) {
 	channels, err := New(Config{}).Channels(context.Background())
 	if err != nil {
@@ -185,6 +233,155 @@ func TestChannelsReturnPinnedCatalogWithoutCLI(t *testing.T) {
 	}
 	if !feishu.Installed || feishu.Origin != "available" || feishu.AccountCount != 0 || feishu.Status != "installed" {
 		t.Fatalf("pinned Feishu channel state is wrong: %+v", feishu)
+	}
+}
+
+func TestCronOrchestrationUsesOpenClawCLIAndNormalizesJobs(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "cron.log")
+	script := writeExecutable(t, dir, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "`+logPath+`"
+case "$1 $2" in
+  "cron list") printf '%s' '{"jobs":[{"id":"oc-1","name":"Daily","description":"desc","enabled":true,"declarationKey":"sta100:JOB-1","agentId":"sta100-coordinator","sessionTarget":"isolated","schedule":{"kind":"cron","expr":"0 8 * * *"},"payload":{"kind":"agentTurn","message":"run"},"state":{"nextRunAtMs":1760000000000},"status":"idle"}],"total":1,"hasMore":false}' ;;
+  "cron status") printf '%s' '{"enabled":true,"running":true,"nextWakeAtMs":1760000000000}' ;;
+  "cron add") printf '%s' '{"created":true,"job":{"id":"oc-2","name":"New","enabled":true,"schedule":{"kind":"every","everyMs":3600000},"payload":{"kind":"agentTurn","message":"run"},"state":{}}}' ;;
+  "cron edit") printf '%s' '{"id":"oc-1","name":"Daily","enabled":false,"schedule":{"kind":"cron","expr":"0 8 * * *"},"payload":{"kind":"agentTurn","message":"run"},"state":{}}' ;;
+  "cron enable") printf '%s' '{"id":"oc-1","name":"Daily","enabled":true,"schedule":{"kind":"cron","expr":"0 8 * * *"},"payload":{"kind":"agentTurn","message":"run"},"state":{}}' ;;
+  "cron rm") printf '%s' '{"removed":true}' ;;
+  "cron run") printf '%s' '{"ok":true,"enqueued":true,"runId":"run-1"}' ;;
+  "cron runs") printf '%s' '{"entries":[{"runId":"run-1","status":"ok","summary":"done"}],"total":1}' ;;
+  *) exit 2 ;;
+esac
+`)
+	service := New(Config{BinaryPath: script})
+	list, err := service.CronList(context.Background())
+	if err != nil || len(list.Jobs) != 1 || list.Jobs[0].ID != "oc-1" || list.Jobs[0].Status != "idle" {
+		t.Fatalf("cron list = %#v, err=%v", list, err)
+	}
+	added, err := service.CronAdd(context.Background(), CronJobInput{Name: "New", Description: "desc", Enabled: true, AgentID: "sta100-coordinator", ScheduleKind: "every", ScheduleValue: "1h", Message: "run"})
+	if err != nil || added.ID != "oc-2" {
+		t.Fatalf("cron add = %#v, err=%v", added, err)
+	}
+	edited, err := service.CronEdit(context.Background(), CronJobInput{ID: "oc-1", Name: "Daily", Description: "desc", Enabled: false, AgentID: "sta100-coordinator", ScheduleKind: "cron", ScheduleValue: "0 8 * * *", Message: "run"})
+	if err != nil || edited.ID != "oc-1" || edited.Enabled {
+		t.Fatalf("cron edit = %#v, err=%v", edited, err)
+	}
+	enabled, err := service.CronEnable(context.Background(), "oc-1", true)
+	if err != nil || !enabled.Enabled {
+		t.Fatalf("cron enable = %#v, err=%v", enabled, err)
+	}
+	runs, err := service.CronRuns(context.Background(), "oc-1", 10)
+	if err != nil || len(runs.Entries) != 1 || runs.Entries[0].Status != "ok" {
+		t.Fatalf("cron runs = %#v, err=%v", runs, err)
+	}
+	if _, err := service.CronRun(context.Background(), "oc-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CronRemove(context.Background(), "oc-1"); err != nil {
+		t.Fatal(err)
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logged), "cron add --json --name New --description desc --agent sta100-coordinator --session isolated --no-deliver --message run --every 1h") {
+		t.Fatalf("cron add arguments were not mapped correctly:\n%s", logged)
+	}
+}
+
+func TestRunInjectsConfigPathAndGatewayTokenWithoutArguments(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "openclaw.json")
+	envPath := filepath.Join(dir, "env.txt")
+	argsPath := filepath.Join(dir, "args.txt")
+	if err := os.WriteFile(configPath, []byte(`{"gateway":{"auth":{"mode":"token","token":"must-not-leak"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := writeExecutable(t, dir, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "`+argsPath+`"
+printf 'OPENCLAW_CONFIG_PATH=%s\nOPENCLAW_GATEWAY_TOKEN=%s\n' "${OPENCLAW_CONFIG_PATH:-}" "${OPENCLAW_GATEWAY_TOKEN:-}" > "`+envPath+`"
+printf '%s' '{"enabled":true}'
+`)
+	service := New(Config{BinaryPath: script, ConfigPath: configPath})
+	if _, err := service.CronStatus(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := os.ReadFile(envPath)
+	if !strings.Contains(string(env), "OPENCLAW_CONFIG_PATH="+configPath) || !strings.Contains(string(env), "OPENCLAW_GATEWAY_TOKEN=must-not-leak") {
+		t.Fatalf("OpenClaw environment was not injected:\n%s", env)
+	}
+	args, _ := os.ReadFile(argsPath)
+	if strings.Contains(string(args), "must-not-leak") {
+		t.Fatalf("gateway token leaked into command arguments: %s", args)
+	}
+}
+
+func TestChannelsUsePinnedCatalogAndDefaultPackageWithoutCLI(t *testing.T) {
+	dir := t.TempDir()
+	_ = dir
+	channels, err := New(Config{}).Channels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var feishu, weixin Channel
+	for _, channel := range channels {
+		switch channel.ID {
+		case "feishu":
+			feishu = channel
+		case "openclaw-weixin":
+			weixin = channel
+		}
+	}
+	if !feishu.Installed || feishu.Origin != "available" || feishu.PluginID != "feishu" {
+		t.Fatalf("Feishu pinned state is wrong: %+v", feishu)
+	}
+	if weixin.InstallSpec != "@tencent-weixin/openclaw-weixin@2.4.6" {
+		t.Fatalf("Weixin default package was not loaded: %+v", weixin)
+	}
+}
+
+func TestInstallAndUninstallVerifyOpenClawInventory(t *testing.T) {
+	dir := t.TempDir()
+	installedPath := filepath.Join(dir, "installed")
+	enabledPath := filepath.Join(dir, "enabled")
+	script := writeExecutable(t, dir, `#!/usr/bin/env bash
+set -euo pipefail
+installed="`+installedPath+`"
+enabled="`+enabledPath+`"
+case "$1 $2" in
+  "plugins list")
+    if [[ -f "$installed" ]]; then
+      if [[ -f "$enabled" ]]; then
+        printf '%s' '{"plugins":[{"id":"discord","name":"Discord","version":"2026.7.1","origin":"global","enabled":true,"status":"loaded","channelIds":["discord"]}]}'
+      else
+        printf '%s' '{"plugins":[{"id":"discord","name":"Discord","version":"2026.7.1","origin":"global","enabled":false,"status":"disabled","channelIds":["discord"]}]}'
+      fi
+    else
+      printf '%s' '{"plugins":[]}'
+    fi
+    ;;
+  "plugins install") touch "$installed" ;;
+  "plugins enable") touch "$enabled" ;;
+  "plugins uninstall") rm -f "$installed" "$enabled" ;;
+  *) exit 2 ;;
+esac
+`)
+	service := New(Config{BinaryPath: script})
+	installed, err := service.InstallChannel(context.Background(), "discord", "")
+	if err != nil {
+		t.Fatalf("InstallChannel() error = %v", err)
+	}
+	if installed["verified"] != true || installed["action"] != "installed" {
+		t.Fatalf("install result was not verified: %#v", installed)
+	}
+	uninstalled, err := service.UninstallChannel(context.Background(), "discord")
+	if err != nil {
+		t.Fatalf("UninstallChannel() error = %v", err)
+	}
+	if uninstalled["verified"] != true || uninstalled["action"] != "uninstalled" {
+		t.Fatalf("uninstall result was not verified: %#v", uninstalled)
 	}
 }
 
@@ -373,6 +570,45 @@ printf '%s' '{"runId":"run-1","status":"ok","result":{"payloads":[{"text":"ok"}]
 	}
 	if !strings.Contains(lines[1], "--model minimax/MiniMax-M3") {
 		t.Fatalf("non-default model should be passed as override: %s", lines[1])
+	}
+}
+
+func TestSendAgentMessageAppliesAgentTimeout(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "openclaw.json")
+	argsPath := filepath.Join(dir, "args.txt")
+	if err := os.WriteFile(configPath, []byte(`{"agents":{"defaults":{"timeoutSeconds":30},"list":[{"id":"export-agent"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := writeExecutable(t, dir, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "`+argsPath+`"
+printf '%s' '{"runId":"run-1","status":"ok","result":{"payloads":[{"text":"ok"}]}}'
+`)
+	service := New(Config{BinaryPath: script, ConfigPath: configPath})
+	if _, err := service.SendAgentMessage(context.Background(), AgentMessageInput{
+		AgentID: "export-agent", Message: "hello", SessionKey: "session-1", Sources: []string{"本地业务数据库"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := os.ReadFile(argsPath)
+	expectedArg := "--timeout " + strconv.Itoa(agentMessageTimeoutSeconds)
+	if !strings.Contains(string(args), expectedArg) {
+		t.Fatalf("agent timeout argument missing: args=%s want %s", args, expectedArg)
+	}
+	var config struct {
+		Agents struct {
+			Defaults struct {
+				TimeoutSeconds int `json:"timeoutSeconds"`
+			} `json:"defaults"`
+		} `json:"agents"`
+	}
+	contents, _ := os.ReadFile(configPath)
+	if err := json.Unmarshal(contents, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Agents.Defaults.TimeoutSeconds != agentMessageTimeoutSeconds {
+		t.Fatalf("timeoutSeconds = %d, want %d", config.Agents.Defaults.TimeoutSeconds, agentMessageTimeoutSeconds)
 	}
 }
 

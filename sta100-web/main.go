@@ -49,6 +49,12 @@ func main() {
 	defer store.Close()
 	business := newBusinessAPI(store, openClaw)
 	files := http.FileServer(http.FS(ui))
+	staticFiles := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The UI is embedded and changes are deployed by restarting this local
+		// service, so stale browser assets must not survive a refresh.
+		w.Header().Set("Cache-Control", "no-store, max-age=0")
+		files.ServeHTTP(w, r)
+	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/status", auth.statusHandler)
@@ -71,7 +77,7 @@ func main() {
 	protectedAPI.HandleFunc("/api/v1/auth/account", auth.accountHandler)
 	protectedAPI.Handle("/api/v1/", business)
 	mux.Handle("/api/v1/", auth.requireSession(protectedAPI))
-	mux.Handle("/", files)
+	mux.Handle("/", staticFiles)
 
 	log.Printf("STA-100 web service listening on %s", *addr)
 	log.Printf("OpenClaw CLI: %s", valueOrUnavailable(openClaw.service.BinaryPath()))
@@ -222,7 +228,9 @@ func (s *openClawService) channelsHandler(w http.ResponseWriter, r *http.Request
 	if !allowMethod(w, r, http.MethodGet) {
 		return
 	}
-	channels, err := s.service.Channels(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 75*time.Second)
+	defer cancel()
+	channels, err := s.service.Channels(ctx)
 	if err != nil {
 		writeOpenClawError(w, err)
 		return
@@ -232,6 +240,40 @@ func (s *openClawService) channelsHandler(w http.ResponseWriter, r *http.Request
 
 func (s *openClawService) channelHandler(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/openclaw/channels/"), "/"), "/")
+	if len(parts) == 2 && parts[1] == "install" {
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		var request struct {
+			PackageSpec string `json:"packageSpec"`
+		}
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		defer cancel()
+		result, err := s.service.InstallChannel(ctx, parts[0], request.PackageSpec)
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "uninstall" {
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		defer cancel()
+		result, err := s.service.UninstallChannel(ctx, parts[0])
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	if len(parts) == 3 && parts[1] == "qr" && parts[2] == "start" {
 		if !allowMutation(w, r, http.MethodPost) {
 			return
@@ -243,7 +285,7 @@ func (s *openClawService) channelHandler(w http.ResponseWriter, r *http.Request)
 		if err := decodeJSONBody(w, r, &request); err != nil {
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
 		result, err := s.service.StartFeishuQR(ctx, parts[0], request.Account, request.Domain)
 		if err != nil {
@@ -271,14 +313,18 @@ func (s *openClawService) channelHandler(w http.ResponseWriter, r *http.Request)
 		if !allowMethod(w, r, http.MethodGet) {
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		// `openclaw channels status` performs a live probe and can take more
+		// than 30 seconds for a healthy Feishu connection. Keep this timeout
+		// separate from quick gateway/status requests so a slow probe is not
+		// misreported as a channel failure.
+		ctx, cancel := context.WithTimeout(r.Context(), 55*time.Second)
 		defer cancel()
 		status, err := s.service.ChannelStatus(ctx, parts[0])
 		if err != nil {
 			writeOpenClawError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, status)
+		writeJSON(w, http.StatusOK, normalizeChannelStatusResponse(parts[0], status))
 		return
 	}
 	if len(parts) == 2 && parts[1] == "login" {
@@ -291,10 +337,14 @@ func (s *openClawService) channelHandler(w http.ResponseWriter, r *http.Request)
 		if err := decodeJSONBody(w, r, &request); err != nil {
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
 		result, err := s.service.LoginChannel(ctx, parts[0], request.Account)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				writeAPIError(w, http.StatusGatewayTimeout, "CHANNEL_LOGIN_TIMEOUT", "OpenClaw 通道登录等待超时；该通道可能需要扫码或网页登录确认，但当前 OpenClaw 未在限定时间内返回可展示的授权信息。")
+				return
+			}
 			writeOpenClawError(w, err)
 			return
 		}
@@ -321,6 +371,111 @@ func (s *openClawService) channelHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func normalizeChannelStatusResponse(channel string, raw map[string]any) map[string]any {
+	channel = strings.TrimSpace(strings.ToLower(channel))
+	item := map[string]any{}
+	if channels, ok := raw["channels"].(map[string]any); ok {
+		if value, ok := channels[channel].(map[string]any); ok {
+			item = value
+		}
+	}
+	configured, _ := item["configured"].(bool)
+	running, _ := item["running"].(bool)
+	connected, _ := item["connected"].(bool)
+	lastError, _ := item["lastError"].(string)
+	queryState, _ := raw["queryState"].(string)
+	queryMessage, _ := raw["queryMessage"].(string)
+	accounts := make([]map[string]any, 0)
+	accountConnected := false
+	accountError := ""
+	if channelAccounts, ok := raw["channelAccounts"].(map[string]any); ok {
+		if values, ok := channelAccounts[channel].([]any); ok {
+			for _, value := range values {
+				account, ok := value.(map[string]any)
+				if !ok {
+					continue
+				}
+				accountLabel := "未配置"
+				accountIsConnected, _ := account["connected"].(bool)
+				accountConfigured, _ := account["configured"].(bool)
+				accountLastError, _ := account["lastError"].(string)
+				switch {
+				case strings.TrimSpace(accountLastError) != "":
+					accountLabel = "异常"
+				case accountIsConnected:
+					accountLabel = "已连接"
+					accountConnected = true
+				case accountConfigured:
+					accountLabel = "已配置"
+				}
+				if strings.TrimSpace(accountLastError) != "" && accountLastError != "not configured" && accountLastError != "not connected" {
+					if accountError == "" {
+						accountError = accountLastError
+					}
+				}
+				accounts = append(accounts, map[string]any{
+					"accountId": account["accountId"], "label": accountLabel,
+					"configured": accountConfigured, "connected": accountIsConnected,
+					"lastError": strings.TrimSpace(accountLastError),
+				})
+			}
+		}
+	}
+	if strings.TrimSpace(lastError) == "" {
+		lastError = accountError
+	}
+	label := "未配置"
+	message := "OpenClaw 中尚未配置该通道账号。"
+	switch {
+	case queryState == "timeout":
+		label = "状态查询失败"
+		message = firstNonEmptyString(queryMessage, "OpenClaw 状态查询超时，暂时无法确认通道真实状态。")
+	case queryState != "" && queryState != "ok":
+		label = "状态查询失败"
+		message = firstNonEmptyString(queryMessage, "OpenClaw 状态查询失败，暂时无法确认通道真实状态。")
+	case strings.TrimSpace(lastError) != "":
+		label = "通道异常"
+		message = "通道运行异常，请检查账号配置和 OpenClaw 网关日志。"
+	case connected || accountConnected:
+		label = "已连接"
+		message = "通道账号已配置，并已确认与服务建立连接。"
+	case running:
+		label = "运行中"
+		message = "通道正在运行，但 OpenClaw 尚未返回已连接状态。"
+	case configured:
+		label = "已配置"
+		message = "通道账号已写入 OpenClaw，但当前尚未确认连接。"
+	}
+	return map[string]any{
+		"channel":    channel,
+		"label":      label,
+		"message":    message,
+		"queryState": queryStateOrOK(queryState),
+		"configured": configured,
+		"running":    running,
+		"connected":  connected || accountConnected,
+		"lastError":  strings.TrimSpace(lastError),
+		"accounts":   accounts,
+		"checkedAt":  time.Now().Format(time.RFC3339),
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func queryStateOrOK(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "ok"
+	}
+	return strings.TrimSpace(value)
 }
 
 func (s *openClawService) agentsHandler(w http.ResponseWriter, r *http.Request) {

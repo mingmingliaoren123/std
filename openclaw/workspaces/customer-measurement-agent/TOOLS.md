@@ -1,33 +1,24 @@
-# TOOLS.md - Local Notes
+# TOOLS.md - STA-100 客户发现工具约束
 
-Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup: camera names and locations, SSH hosts and aliases, preferred TTS voices, speaker/room names, device nicknames, anything environment-specific.
+## 允许来源
 
-## Examples
+- 当前 OpenClaw Agent 可访问的公开来源能力。
+- Agent 自身可访问的公开资料或历史公开来源摘要。
 
-```markdown
-### Cameras
+## 禁止来源
 
-- living-room → Main area, 180° wide angle
-- front-door → Entrance, motion-triggered
+- 不访问 STA-100 本机客户库。
+- 不访问 STA-100 SQLite 业务库。
+- 不使用未公开的客户私有资料生成新客户线索。
 
-### SSH
+## 能力不可用时的处理
 
-- home-server → 192.168.1.100, user: admin
+- 公开来源能力不可用时：明确写出能力不可用。
+- 无法核验时，`items` 必须为空数组。
+- 能力不可用不是“没有客户”，只能表示“本轮客户发现未完成”。
 
-### TTS
+## 核验要求
 
-- Preferred voice: "Nova" (warm, slightly British)
-- Default speaker: Kitchen HomePod
-```
-
-## Why Separate?
-
-Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
-
----
-
-Add whatever helps you do your job. This is your cheat sheet.
-
-## Related
-
-- [Agent workspace](/concepts/agent-workspace)
+- 每条客户至少需要名称、国家、城市、类型和一个公开来源。
+- 城市无法确认、类型无法确认或来源缺失的候选，不进入 `items`。
+- 联系方式缺失可以返回，但必须在 `contact` 中写清楚“公开来源未找到联系方式”。

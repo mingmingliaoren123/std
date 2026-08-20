@@ -129,6 +129,8 @@ func (a *businessAPI) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		writeBusinessError(w, err)
 		return
 	}
+	news = filterDisplayableNews(news)
+	recommendations = filterDisplayableRecommendations(recommendations)
 	jobs, err := listRecords[Job](ctx, a.store, "jobs")
 	if err != nil {
 		writeBusinessError(w, err)
@@ -159,6 +161,7 @@ func (a *businessAPI) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		"jobs":            jobs,
 		"plugins":         plugins,
 		"overview":        a.overviewSummaryData(ctx),
+		"automation":      a.overviewAutomationData(ctx),
 		"preferences":     preferences,
 	})
 }

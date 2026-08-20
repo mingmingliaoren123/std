@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,8 @@ type Config struct {
 	PluginDir  string
 }
 
+const agentMessageTimeoutSeconds = 300
+
 type Service struct {
 	bin          string
 	configPath   string
@@ -58,6 +61,10 @@ type Service struct {
 	pluginDir    string
 	qrMu         sync.Mutex
 	qrSessions   map[string]*feishuQRSession
+	pluginMu     sync.Mutex
+	pluginCache  []pluginInventoryEntry
+	pluginAt     time.Time
+	messageGate  chan struct{}
 }
 
 type AuditIssue struct {
@@ -173,6 +180,11 @@ type Channel struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	Description  string `json:"description,omitempty"`
+	PluginID     string `json:"pluginId,omitempty"`
+	InstallSpec  string `json:"installSpec,omitempty"`
+	BindingMode  string `json:"bindingMode,omitempty"`
+	CanInstall   bool   `json:"canInstall"`
+	CanUninstall bool   `json:"canUninstall"`
 	Installed    bool   `json:"installed"`
 	Enabled      bool   `json:"enabled"`
 	Configured   bool   `json:"configured"`
@@ -288,6 +300,7 @@ func New(config Config) *Service {
 		manifestPath: config.Manifest,
 		pluginDir:    config.PluginDir,
 		qrSessions:   make(map[string]*feishuQRSession),
+		messageGate:  make(chan struct{}, 2),
 	}
 }
 
@@ -883,6 +896,29 @@ func (s *Service) SaveAPIKey(ctx context.Context, provider, apiKey string) (stri
 	return profileID, nil
 }
 
+func (s *Service) ConfigureWebSearchForModelProvider(ctx context.Context, provider, apiKey string) error {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	webSearchProvider, ok := webSearchProviderForModelProvider(provider)
+	if !ok {
+		return nil
+	}
+	if !providerPattern.MatchString(provider) {
+		return ErrInvalidProvider
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		savedAPIKey, err := s.LoadAPIKey(ctx, provider)
+		if err != nil {
+			return err
+		}
+		apiKey = savedAPIKey
+	}
+	if len(apiKey) < 8 || len(apiKey) > 8192 || strings.ContainsAny(apiKey, "\r\n\x00") {
+		return ErrInvalidAPIKey
+	}
+	return s.applyWebSearchProviderConfig(provider, webSearchProvider, apiKey)
+}
+
 func (s *Service) LoadAPIKey(ctx context.Context, provider string) (string, error) {
 	provider = strings.TrimSpace(strings.ToLower(provider))
 	if !providerPattern.MatchString(provider) {
@@ -1012,6 +1048,63 @@ func (s *Service) applyAuthProfileConfig(provider, profileID, mode string) error
 	return writeFileAtomic(s.configPath, append(data, '\n'), 0o600)
 }
 
+func webSearchProviderForModelProvider(provider string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(provider)) {
+	case "minimax":
+		return "minimax", true
+	case "xai":
+		return "grok", true
+	case "google":
+		return "gemini", true
+	default:
+		return "", false
+	}
+}
+
+func (s *Service) applyWebSearchProviderConfig(provider, webSearchProvider, apiKey string) error {
+	if s.configPath == "" {
+		return ErrUnavailable
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return err
+	}
+	var config map[string]any
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		config = map[string]any{}
+	} else if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("%w: openclaw config: %v", ErrInvalidResponse, err)
+	}
+	tools := ensureObject(config, "tools")
+	web := ensureObject(tools, "web")
+	search := ensureObject(web, "search")
+	search["enabled"] = true
+	search["provider"] = webSearchProvider
+	if _, ok := search["maxResults"]; !ok {
+		search["maxResults"] = 10
+	}
+	if _, ok := search["timeoutSeconds"]; !ok {
+		search["timeoutSeconds"] = 30
+	}
+
+	plugins := ensureObject(config, "plugins")
+	entries := ensureObject(plugins, "entries")
+	plugin := ensureObject(entries, provider)
+	plugin["enabled"] = true
+	pluginConfig := ensureObject(plugin, "config")
+	webSearch := ensureObject(pluginConfig, "webSearch")
+	webSearch["apiKey"] = apiKey
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(s.configPath, append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	go s.refreshGatewayAuthState(context.Background())
+	return nil
+}
+
 func (s *Service) applyDefaultModelConfig(modelID string) error {
 	if s.configPath == "" {
 		return ErrUnavailable
@@ -1072,6 +1165,52 @@ func (s *Service) applyModelSelectionConfig(defaultModel string, selectedModels 
 		return err
 	}
 	return writeFileAtomic(s.configPath, append(data, '\n'), 0o600)
+}
+
+func (s *Service) ensureAgentDefaultsTimeout(seconds int) error {
+	if s.configPath == "" || seconds <= 0 {
+		return nil
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var config map[string]any
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		config = map[string]any{}
+	} else if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("%w: openclaw config: %v", ErrInvalidResponse, err)
+	}
+	agents := ensureObject(config, "agents")
+	defaults := ensureObject(agents, "defaults")
+	if configuredAgentTimeoutSeconds(defaults["timeoutSeconds"]) >= seconds {
+		return nil
+	}
+	defaults["timeoutSeconds"] = seconds
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(s.configPath, append(data, '\n'), 0o600)
+}
+
+func configuredAgentTimeoutSeconds(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return int(parsed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
 }
 
 // ensureConfiguredProviderModels bridges the application catalog and OpenClaw's
@@ -1361,6 +1500,14 @@ func (s *Service) SendAgentMessage(ctx context.Context, input AgentMessageInput)
 			return AgentMessageResult{}, ErrInvalidSource
 		}
 	}
+	if err := s.ensureAgentDefaultsTimeout(agentMessageTimeoutSeconds); err != nil {
+		return AgentMessageResult{}, err
+	}
+	release, err := s.acquireMessageSlot(ctx)
+	if err != nil {
+		return AgentMessageResult{}, err
+	}
+	defer release()
 
 	contents := buildAgentMessage(input)
 	messageFile, err := os.CreateTemp("", "sta100-agent-message-*.txt")
@@ -1389,7 +1536,7 @@ func (s *Service) SendAgentMessage(ctx context.Context, input AgentMessageInput)
 		}
 		args = append(args, "--model", model)
 	}
-	args = append(args, "--message-file", messagePath, "--session-key", input.SessionKey, "--json", "--timeout", "90")
+	args = append(args, "--message-file", messagePath, "--session-key", input.SessionKey, "--json", "--timeout", strconv.Itoa(agentMessageTimeoutSeconds))
 	out, err := s.run(ctx, nil, args...)
 	if err != nil {
 		return AgentMessageResult{}, err
@@ -1401,6 +1548,18 @@ func (s *Service) SendAgentMessage(ctx context.Context, input AgentMessageInput)
 	result.AgentID = input.AgentID
 	result.SessionKey = input.SessionKey
 	return result, nil
+}
+
+func (s *Service) acquireMessageSlot(ctx context.Context) (func(), error) {
+	if s == nil || s.messageGate == nil {
+		return func() {}, nil
+	}
+	select {
+	case s.messageGate <- struct{}{}:
+		return func() { <-s.messageGate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // SessionHistory reads persisted messages from OpenClaw's JSONL session store.
@@ -1838,7 +1997,7 @@ func (s *Service) run(ctx context.Context, stdin io.Reader, args ...string) ([]b
 	}
 	command := exec.CommandContext(ctx, s.bin, args...)
 	command.Stdin = stdin
-	command.Env = os.Environ()
+	command.Env = s.commandEnv()
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
@@ -1849,6 +2008,44 @@ func (s *Service) run(ctx context.Context, stdin io.Reader, args ...string) ([]b
 		return nil, &commandError{args: append([]string(nil), args...), stderr: tail(stderr.String(), 800), err: err}
 	}
 	return stdout.Bytes(), nil
+}
+
+func (s *Service) commandEnv() []string {
+	env := os.Environ()
+	if s.configPath != "" && os.Getenv("OPENCLAW_CONFIG_PATH") == "" {
+		env = append(env, "OPENCLAW_CONFIG_PATH="+s.configPath)
+	}
+	if os.Getenv("OPENCLAW_GATEWAY_TOKEN") == "" {
+		if token := s.gatewayTokenFromConfig(); token != "" {
+			env = append(env, "OPENCLAW_GATEWAY_TOKEN="+token)
+		}
+	}
+	return env
+}
+
+func (s *Service) gatewayTokenFromConfig() string {
+	if s.configPath == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return ""
+	}
+	var config struct {
+		Gateway struct {
+			Auth struct {
+				Mode  string `json:"mode"`
+				Token string `json:"token"`
+			} `json:"auth"`
+		} `json:"gateway"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(config.Gateway.Auth.Mode), "token") {
+		return strings.TrimSpace(config.Gateway.Auth.Token)
+	}
+	return ""
 }
 
 func rootCandidates() []string {

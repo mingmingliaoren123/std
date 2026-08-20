@@ -26,14 +26,17 @@ import (
 
 func defaultPreferences() UserPreferences {
 	return UserPreferences{
-		RecommendationEnabled: true,
-		NewsShowLimit:         20,
-		NewsFrequency:         "1小时",
-		NewsCountries:         "德国、法国、波兰、瑞典",
-		NewsTopics:            "E-bike、智能骑行、经销商、欧盟法规",
-		NewsSources:           "EUR-Lex\nBike Europe\nCycling Industry News\nEurobike",
-		AgentAllowlists:       map[string][]string{},
-		AgentModelOverrides:   map[string]string{},
+		RecommendationEnabled:   true,
+		RecommendationShowLimit: 5,
+		DiscoveryShowLimit:      10,
+		NewsFetchLimit:          5,
+		NewsShowLimit:           20,
+		NewsFrequency:           "1小时",
+		NewsCountries:           "德国、法国、波兰、瑞典",
+		NewsTopics:              "E-bike、智能骑行、经销商、欧盟法规",
+		NewsSources:             "EUR-Lex\nBike Europe\nCycling Industry News\nEurobike",
+		AgentAllowlists:         map[string][]string{},
+		AgentModelOverrides:     map[string]string{},
 	}
 }
 
@@ -297,10 +300,47 @@ func (a *businessAPI) privateFileContent(w http.ResponseWriter, r *http.Request,
 }
 
 func (a *businessAPI) tasksRouter(w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) > 0 && parts[0] != "" {
+		writeAPIError(w, http.StatusNotFound, "API_NOT_FOUND", "待办接口不存在")
+		return
+	}
+	if r.Method == http.MethodGet {
+		items, err := listRecords[Task](r.Context(), a.store, "tasks")
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		listResponse(w, items)
+		return
+	}
 	if !allowMutation(w, r, http.MethodPost) {
 		return
 	}
-	writeTODO(w, "TODO_TASK_SOURCE", "待办写入接口已保留，需确认待办来源、字段、提醒和完成规则", []string{"待办字段", "提醒规则", "完成状态", "Agent 同步范围"})
+	var request Task
+	if err := decodeJSONBody(w, r, &request); err != nil {
+		return
+	}
+	request.Title = strings.TrimSpace(request.Title)
+	if request.Title == "" {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_TASK", "待办标题不能为空")
+		return
+	}
+	id, err := a.store.nextSequence(r.Context(), "tasks", "TASK", 4)
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	now := currentText()
+	if strings.TrimSpace(request.Status) == "" {
+		request.Status = "open"
+	}
+	request.ID, request.CreatedAt, request.UpdatedAt = id, now, now
+	if err := a.store.create(r.Context(), "tasks", id, request); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	a.store.audit(r.Context(), "create", "task", id, requestOperator(r), map[string]any{"source": request.Source})
+	writeJSON(w, http.StatusCreated, map[string]any{"item": request, "message": "待办已保存到本机任务列表；提醒、完成状态同步范围后续按客户规则扩展。"})
 }
 
 func privateDataRoot() (string, error) {
@@ -363,11 +403,43 @@ func humanBytes(value int64) string {
 }
 
 func (a *businessAPI) newsRouter(w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) > 0 && parts[0] == "history" {
+		if !allowMutation(w, r, http.MethodDelete) {
+			return
+		}
+		count, err := a.store.softDeleteKind(r.Context(), "news")
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": count, "news": []NewsItem{}})
+		return
+	}
 	if len(parts) > 0 && parts[0] == "refresh" {
 		if !allowMutation(w, r, http.MethodPost) {
 			return
 		}
-		writeTODO(w, "TODO_NEWS_SOURCES", "行业新闻刷新接口已保留，需客户确认来源白名单、授权和抓取规则", []string{"来源白名单", "授权方式", "抓取频率", "失败重试", "留存周期"})
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+		defer cancel()
+		result, err := a.runBuiltInBusinessJobNow(ctx, "JOB-NEWS")
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+		// The OpenClaw run can outlive the request deadline. The job result is
+		// persisted with a background context, so use a fresh short-lived
+		// context for the final read instead of reusing an expired request
+		// context and returning BUSINESS_STORE_FAILED after a successful sync.
+		readCtx, readCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer readCancel()
+		items, err := listRecords[NewsItem](readCtx, a.store, "news")
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		result["news"] = filterDisplayableNews(items)
+		result["automation"] = a.overviewAutomationData(readCtx)
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 	if len(parts) > 0 && parts[0] != "" {
@@ -390,10 +462,11 @@ func (a *businessAPI) newsRouter(w http.ResponseWriter, r *http.Request, parts [
 		writeBusinessError(w, err)
 		return
 	}
+	items = filterDisplayableNews(items)
 	category := r.URL.Query().Get("category")
 	filtered := make([]NewsItem, 0, len(items))
 	for _, item := range items {
-		if category == "" || category == "全部" || item.Category == category {
+		if newsMatchesCategory(item, category) {
 			filtered = append(filtered, item)
 		}
 	}
@@ -413,6 +486,8 @@ func (a *businessAPI) overviewRouter(w http.ResponseWriter, r *http.Request, par
 		a.overviewSummary(w, r)
 	case "recommendations":
 		a.overviewRecommendations(w, r)
+	case "recommendations/refresh":
+		a.overviewRecommendationsRefresh(w, r)
 	case "subscription":
 		a.overviewSubscription(w, r)
 	case "oem/match", "oem-matches", "oem-matches/export":
@@ -455,16 +530,20 @@ func (a *businessAPI) overviewFull(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r, http.MethodGet) {
 		return
 	}
-	news, _ := listRecords[NewsItem](r.Context(), a.store, "news")
-	recommendations, _ := listRecords[Recommendation](r.Context(), a.store, "recommendations")
+	ctx := r.Context()
+	news, _ := listRecords[NewsItem](ctx, a.store, "news")
+	recommendations, _ := listRecords[Recommendation](ctx, a.store, "recommendations")
+	news = filterDisplayableNews(news)
+	recommendations = filterDisplayableRecommendations(recommendations)
 	preferences := defaultPreferences()
-	_ = a.store.getSetting(r.Context(), "preferences", &preferences)
+	_ = a.store.getSetting(ctx, "preferences", &preferences)
 	visibleNews := news
 	if len(visibleNews) > 3 {
 		visibleNews = visibleNews[:3]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"summary":     a.overviewSummaryData(r.Context()),
+		"summary":     a.overviewSummaryData(ctx),
+		"automation":  a.overviewAutomationData(ctx),
 		"preferences": preferences, "recommendations": recommendations, "news": visibleNews,
 		"dataStatus": "partial_real_data", "todo": []string{"待办来源", "日程来源", "Agent 会话统计", "OEM 原始数据"},
 	})
@@ -483,11 +562,12 @@ func (a *businessAPI) preferencesRouter(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	var request struct {
-		Enabled   *bool  `json:"enabled"`
-		Frequency string `json:"frequency"`
-		Countries string `json:"countries"`
-		Topics    string `json:"topics"`
-		Sources   string `json:"sources"`
+		Enabled        *bool  `json:"enabled"`
+		Frequency      string `json:"frequency"`
+		NewsFetchLimit int    `json:"newsFetchLimit"`
+		Countries      string `json:"countries"`
+		Topics         string `json:"topics"`
+		Sources        string `json:"sources"`
 	}
 	if err := decodeJSONBody(w, r, &request); err != nil {
 		return
@@ -504,6 +584,13 @@ func (a *businessAPI) preferencesRouter(w http.ResponseWriter, r *http.Request, 
 		}
 		preferences.NewsFrequency = request.Frequency
 	}
+	if request.NewsFetchLimit > 0 {
+		if request.NewsFetchLimit < 1 || request.NewsFetchLimit > 100 {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_NEWS_FETCH_LIMIT", "每次获取数量必须是 1-100")
+			return
+		}
+		preferences.NewsFetchLimit = request.NewsFetchLimit
+	}
 	if request.Countries != "" {
 		preferences.NewsCountries = request.Countries
 	}
@@ -517,7 +604,14 @@ func (a *businessAPI) preferencesRouter(w http.ResponseWriter, r *http.Request, 
 		writeBusinessError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, preferences)
+	response := preferencesSaveResponse(preferences, "推荐开关已保存，OpenClaw 定时任务将在后台同步。", nil)
+	response["automation"] = a.overviewAutomationData(r.Context())
+	go func(preferences UserPreferences) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_, _ = a.syncPreferenceAutomation(ctx, preferences)
+	}(preferences)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (a *businessAPI) overviewSummary(w http.ResponseWriter, r *http.Request) {
@@ -531,6 +625,7 @@ func (a *businessAPI) overviewSummaryData(ctx context.Context) map[string]any {
 	orders, _ := listRecords[Order](ctx, a.store, "orders")
 	documents, _ := listRecords[Document](ctx, a.store, "documents")
 	news, _ := listRecords[NewsItem](ctx, a.store, "news")
+	news = filterDisplayableNews(news)
 	messages, _ := listRecords[AgentMessageRecord](ctx, a.store, "agent_messages")
 	activeOrders, reviewDocuments := 0, 0
 	for _, item := range orders {
@@ -546,6 +641,167 @@ func (a *businessAPI) overviewSummaryData(ctx context.Context) map[string]any {
 	return map[string]any{"tasks": 0, "meetings": 0, "documents": reviewDocuments, "orders": activeOrders, "chats": len(messages) / 2, "news": len(news), "dataStatus": "business_and_agent_aggregates", "todo": []string{"待办来源", "日程来源"}}
 }
 
+func (a *businessAPI) overviewAutomationData(ctx context.Context) map[string]any {
+	jobs, _ := listRecords[Job](ctx, a.store, "jobs")
+	recommendations, _ := listRecords[Recommendation](ctx, a.store, "recommendations")
+	news, _ := listRecords[NewsItem](ctx, a.store, "news")
+	recommendations = filterDisplayableRecommendations(recommendations)
+	news = filterDisplayableNews(news)
+	files, _ := listRecords[PrivateFile](ctx, a.store, "private_files")
+	jobByID := map[string]Job{}
+	for _, job := range jobs {
+		if job.BuiltIn {
+			job = applyBuiltInJobDefaults(job)
+		}
+		jobByID[job.ID] = job
+	}
+	_ = files
+	items := []map[string]any{
+		automationItem("recommendations", "为你推荐", jobByID["JOB-RECOMMEND"], len(recommendations)),
+		automationItem("news", "行业新闻", jobByID["JOB-NEWS"], len(news)),
+	}
+	lastUpdated := ""
+	nextRun := ""
+	needsAttention := 0
+	failedCount := 0
+	for _, item := range items {
+		if value, _ := item["businessUpdatedAt"].(string); value > lastUpdated {
+			lastUpdated = value
+		}
+		if value, _ := item["nextRun"].(string); nextRun == "" || (value != "" && value < nextRun) {
+			nextRun = value
+		}
+		status, _ := item["businessStatus"].(string)
+		if status == "failed" || status == "needs_review" {
+			needsAttention++
+		}
+		if status == "failed" {
+			failedCount++
+		}
+	}
+	overall := "waiting"
+	if lastUpdated != "" {
+		overall = "updated"
+	}
+	if failedCount > 0 {
+		overall = "failed"
+	} else if needsAttention > 0 {
+		overall = "needs_review"
+	}
+	return map[string]any{
+		"status":              overall,
+		"items":               items,
+		"lastBusinessUpdated": lastUpdated,
+		"nextRun":             nextRun,
+		"needsAttention":      needsAttention,
+		"failedCount":         failedCount,
+		"message":             overviewAutomationMessage(overall, needsAttention, failedCount, lastUpdated),
+	}
+}
+
+func automationItem(key, label string, job Job, dataCount int) map[string]any {
+	status := strings.TrimSpace(job.BusinessStatus)
+	if status == "" {
+		status = "waiting"
+	}
+	message := strings.TrimSpace(job.BusinessMessage)
+	if message == "" {
+		message = defaultBusinessStatusMessage(status)
+	}
+	if status == "failed" {
+		message = normalizeBusinessFailureMessage(message)
+	}
+	if strings.TrimSpace(job.SyncStatus) == "unavailable" || strings.TrimSpace(job.SyncStatus) == "error" || strings.TrimSpace(job.SyncStatus) == "missing" {
+		status = "failed"
+		if strings.TrimSpace(job.SyncMessage) != "" {
+			message = job.SyncMessage
+		}
+		message = normalizeBusinessFailureMessage(message)
+	}
+	return map[string]any{
+		"key":               key,
+		"label":             label,
+		"enabled":           job.Enabled,
+		"agentId":           job.AgentID,
+		"schedule":          firstNonEmpty(job.Schedule, job.ScheduleValue),
+		"openclawId":        job.OpenClawID,
+		"schedulerStatus":   firstNonEmpty(job.Status, "waiting"),
+		"syncStatus":        job.SyncStatus,
+		"syncMessage":       job.SyncMessage,
+		"businessStatus":    status,
+		"businessMessage":   message,
+		"businessUpdatedAt": job.BusinessUpdatedAt,
+		"lastRun":           job.LastRun,
+		"nextRun":           job.NextRun,
+		"lastResult":        job.LastResult,
+		"dataCount":         dataCount,
+	}
+}
+
+func normalizeBusinessFailureMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return defaultBusinessStatusMessage("failed")
+	}
+	if strings.HasPrefix(message, "OpenClaw ") || strings.HasPrefix(message, "任务") || strings.HasPrefix(message, "推荐结果") || strings.HasPrefix(message, "新闻结果") || strings.HasPrefix(message, "文件元数据") {
+		return message
+	}
+	return userJobExecutionError(message)
+}
+
+func defaultBusinessStatusMessage(status string) string {
+	switch status {
+	case "updated":
+		return "业务数据已更新，概览页面正在使用本次结果。"
+	case "syncing":
+		return "OpenClaw 已执行，正在整理业务数据。"
+	case "needs_review":
+		return "任务已执行，但结果需要人工复核后再入库。"
+	case "failed":
+		return "任务同步或业务更新失败，请查看任务记录。"
+	default:
+		return "等待 OpenClaw 首次执行，当前仍显示本机已有缓存数据。"
+	}
+}
+
+func overviewAutomationMessage(status string, needsAttention, failedCount int, lastUpdated string) string {
+	switch status {
+	case "updated":
+		return "推荐、新闻等自动任务已有业务更新记录。"
+	case "needs_review":
+		return fmt.Sprintf("有 %d 个自动任务需要人工复核，页面会继续展示已缓存数据。", needsAttention)
+	case "failed":
+		reviewCount := needsAttention - failedCount
+		if reviewCount > 0 {
+			return fmt.Sprintf("有 %d 个自动任务执行失败，%d 个任务需要人工复核；页面继续展示已缓存数据。", failedCount, reviewCount)
+		}
+		return fmt.Sprintf("有 %d 个自动任务执行失败，页面继续展示已缓存数据；请查看具体失败原因。", failedCount)
+	default:
+		if lastUpdated != "" {
+			return "自动任务已启用，等待下一次业务数据更新。"
+		}
+		return "自动任务已配置，等待 OpenClaw 首次执行。"
+	}
+}
+
+func preferencesSaveResponse(preferences UserPreferences, automationMessage string, automationErr error) map[string]any {
+	response := map[string]any{"preferences": preferences}
+	if automationErr != nil {
+		response["automationSynced"] = false
+		response["automationMessage"] = "设置已保存，但自动任务同步失败：" + automationErr.Error()
+		return response
+	}
+	response["automationSynced"] = true
+	response["automationMessage"] = automationMessage
+	return response
+}
+
+func (a *businessAPI) syncPreferenceAutomation(ctx context.Context, preferences UserPreferences) (string, error) {
+	syncCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	return a.syncRecommendationJobs(syncCtx, preferences)
+}
+
 func (a *businessAPI) overviewRecommendations(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r, http.MethodGet) {
 		return
@@ -555,7 +811,29 @@ func (a *businessAPI) overviewRecommendations(w http.ResponseWriter, r *http.Req
 		writeBusinessError(w, err)
 		return
 	}
+	items = filterDisplayableRecommendations(items)
 	listResponse(w, items)
+}
+
+func (a *businessAPI) overviewRecommendationsRefresh(w http.ResponseWriter, r *http.Request) {
+	if !allowMutation(w, r, http.MethodPost) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	result, err := a.runBuiltInBusinessJobNow(ctx, "JOB-RECOMMEND")
+	if err != nil {
+		writeOpenClawError(w, err)
+		return
+	}
+	items, err := listRecords[Recommendation](ctx, a.store, "recommendations")
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	result["recommendations"] = filterDisplayableRecommendations(items)
+	result["automation"] = a.overviewAutomationData(ctx)
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (a *businessAPI) overviewSubscription(w http.ResponseWriter, r *http.Request) {
@@ -582,7 +860,14 @@ func (a *businessAPI) overviewSubscription(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	a.store.audit(r.Context(), "update", "setting", "recommendation_enabled", requestOperator(r), request)
-	writeJSON(w, http.StatusOK, preferences)
+	response := preferencesSaveResponse(preferences, "推荐开关已保存，OpenClaw 定时任务将在后台同步。", nil)
+	response["automation"] = a.overviewAutomationData(r.Context())
+	go func(preferences UserPreferences) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_, _ = a.syncPreferenceAutomation(ctx, preferences)
+	}(preferences)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (a *businessAPI) overviewCustomerSearch(w http.ResponseWriter, r *http.Request) {
@@ -724,30 +1009,145 @@ func (a *businessAPI) agentChatByID(w http.ResponseWriter, r *http.Request, agen
 }
 
 func (a *businessAPI) agentWeeklyReport(w http.ResponseWriter, r *http.Request) {
-	var auditCount int
-	_ = a.store.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM audit_logs WHERE created_at >= datetime('now','-7 day')`).Scan(&auditCount)
-	messages, _ := listRecords[AgentMessageRecord](r.Context(), a.store, "agent_messages")
-	usage := map[string]int{}
-	for _, message := range messages {
-		if message.Role == "user" {
-			usage[message.AgentID]++
+	snapshot, err := a.buildWeeklyReportSnapshot(r.Context())
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	report, runErr := a.generateWeeklyReportMarkdown(r.Context(), snapshot)
+	if runErr != nil || strings.TrimSpace(report) == "" {
+		report = snapshot.localMarkdown
+		todo := "专门的周报 Agent 暂不可用，已回退为本地汇总草稿。"
+		if runErr != nil {
+			todo = "专门的周报 Agent 生成失败，已回退为本地汇总草稿：" + runErr.Error()
 		}
+		a.store.audit(r.Context(), "weekly_report", "agent", "all", requestOperator(r), map[string]any{"auditCount": snapshot.auditCount, "messageCount": snapshot.messageCount, "mode": "local_aggregate"})
+		writeJSON(w, http.StatusOK, map[string]any{"markdown": report, "generatedAt": snapshot.generatedAt, "partial": true, "generationMode": "local_aggregate", "todo": todo})
+		return
 	}
-	agentIDs := make([]string, 0, len(usage))
-	for agentID := range usage {
-		agentIDs = append(agentIDs, agentID)
+	a.store.audit(r.Context(), "weekly_report", "agent", "all", requestOperator(r), map[string]any{"auditCount": snapshot.auditCount, "messageCount": snapshot.messageCount, "mode": "dedicated_agent"})
+	writeJSON(w, http.StatusOK, map[string]any{"markdown": report, "generatedAt": snapshot.generatedAt, "partial": false, "generationMode": "dedicated_agent", "todo": ""})
+}
+
+type weeklyReportSnapshot struct {
+	generatedAt   string
+	auditCount    int
+	messageCount  int
+	tokenSummary  tokenUsageSummary
+	agentLines    []string
+	jobLines      []string
+	localMarkdown string
+}
+
+func (a *businessAPI) buildWeeklyReportSnapshot(ctx context.Context) (weeklyReportSnapshot, error) {
+	snapshot := weeklyReportSnapshot{generatedAt: time.Now().Format("2006-01-02 15:04:05")}
+	if err := a.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_logs WHERE created_at >= datetime('now','-7 day')`).Scan(&snapshot.auditCount); err != nil {
+		return snapshot, err
 	}
-	sort.Strings(agentIDs)
-	var usageLines strings.Builder
-	if len(agentIDs) == 0 {
-		usageLines.WriteString("- 本周尚无已保存的 Agent 对话。\n")
+	messages, _ := listRecords[AgentMessageRecord](ctx, a.store, "agent_messages")
+	snapshot.messageCount = len(messages)
+	usage, err := a.tokenUsageSummary(ctx, "")
+	if err != nil {
+		return snapshot, err
 	}
-	for _, agentID := range agentIDs {
-		fmt.Fprintf(&usageLines, "- %s：%d 次对话\n", agentID, usage[agentID])
+	snapshot.tokenSummary = usage
+	usageByAgent := append([]tokenAgentSummary(nil), usage.ByAgent...)
+	sort.Slice(usageByAgent, func(i, j int) bool { return usageByAgent[i].Total > usageByAgent[j].Total })
+	if len(usageByAgent) == 0 {
+		snapshot.agentLines = []string{"- 本周尚无可统计的 Agent Token 记录。"}
+	} else {
+		limit := len(usageByAgent)
+		if limit > 6 {
+			limit = 6
+		}
+		lines := make([]string, 0, limit)
+		for i := 0; i < limit; i++ {
+			item := usageByAgent[i]
+			lines = append(lines, fmt.Sprintf("- %s：%s / %s 次调用", item.AgentID, formatWeeklyTokenCount(item.Total), formatWeeklyTokenCount(item.Calls)))
+		}
+		snapshot.agentLines = lines
 	}
-	report := fmt.Sprintf("# STA-100 智能体周报\n\n生成时间：%s\n\n## 使用概览\n\n%s\n## 业务操作\n\n- 最近 7 天已记录操作：%d 次。\n\n## 完成事项\n\n- 客户、报价、订单、单据、产品、供应商和设置变更已写入本机审计日志。\n\n## 待跟进\n\n- 待办和日程来源尚待客户确认。\n- 客户原始知识数据格式尚待提供，私有知识库摘要暂不纳入。\n\n## 来源摘要\n\n- 本地业务数据库\n- 本机 Agent 会话记录\n", time.Now().Format(time.RFC3339), usageLines.String(), auditCount)
-	a.store.audit(r.Context(), "weekly_report", "agent", "all", requestOperator(r), map[string]any{"auditCount": auditCount, "messageCount": len(messages)})
-	writeJSON(w, http.StatusOK, map[string]any{"markdown": report, "generatedAt": time.Now().Format(time.RFC3339), "partial": true, "generationMode": "local_aggregate", "todo": "客户确认周报模板后可增加指定 OpenClaw Agent 的内容摘要"})
+	jobs, _ := listRecords[Job](ctx, a.store, "jobs")
+	jobLines := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		if !job.BuiltIn && strings.TrimSpace(job.Name) == "" {
+			continue
+		}
+		status := humanWeeklyTaskStatus(job)
+		jobLines = append(jobLines, fmt.Sprintf("- %s：%s。%s", job.Name, status, firstNonEmpty(job.BusinessMessage, job.Description, "暂无说明")))
+	}
+	sort.Strings(jobLines)
+	if len(jobLines) == 0 {
+		jobLines = []string{"- 本周暂无已配置任务。"}
+	}
+	snapshot.jobLines = jobLines
+	var builder strings.Builder
+	builder.WriteString("# STA-100 智能体周报\n\n")
+	builder.WriteString("生成时间：")
+	builder.WriteString(snapshot.generatedAt)
+	builder.WriteString("\n\n## 本周总览\n\n")
+	fmt.Fprintf(&builder, "- 近 7 天审计操作：%d 次。\n- 已保存 Agent 消息：%d 条。\n- Token 统计记录：%d 次调用，%s 总 Token。\n", snapshot.auditCount, snapshot.messageCount, snapshot.tokenSummary.Calls, formatWeeklyTokenCount(snapshot.tokenSummary.Total))
+	builder.WriteString("\n## Agent 使用\n\n")
+	for _, line := range snapshot.agentLines {
+		builder.WriteString(line)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\n## 定时任务\n\n")
+	for _, line := range snapshot.jobLines {
+		builder.WriteString(line)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\n## 待跟进\n\n")
+	builder.WriteString("- 定时任务中的异常或待复核项需要结合运行记录继续确认。\n- 若客户补充原始知识数据，本周周报可进一步纳入私有知识库结果。\n")
+	builder.WriteString("\n## 来源\n\n- 本地业务数据库\n- 本机 Agent 会话记录\n- Token 使用记录\n")
+	snapshot.localMarkdown = builder.String()
+	return snapshot, nil
+}
+
+func (a *businessAPI) generateWeeklyReportMarkdown(ctx context.Context, snapshot weeklyReportSnapshot) (string, error) {
+	if a.openClaw == nil || a.openClaw.service == nil {
+		return "", fmt.Errorf("OpenClaw service unavailable")
+	}
+	prompt := strings.TrimSpace(snapshot.localMarkdown)
+	if prompt == "" {
+		return "", fmt.Errorf("weekly report prompt is empty")
+	}
+	result, err := a.openClaw.service.SendAgentMessage(ctx, orchestrator.AgentMessageInput{
+		AgentID:    "sta100-weekly-report",
+		Message:    "请根据以下本周事实生成一份结构清晰的 Markdown 周报。要求保留数字、状态和待办，不要编造。请直接输出正文，不要输出代码块或 STA100_RESULT。\n\n" + prompt,
+		SessionKey: "sta100-weekly-report-weekly",
+		Sources:    []string{"本地业务数据库"},
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(stripSTA100ResultBlocks(result.Text)), nil
+}
+
+func formatWeeklyTokenCount(value int64) string {
+	return strconv.FormatInt(value, 10)
+}
+
+func humanWeeklyTaskStatus(job Job) string {
+	status := strings.ToLower(strings.TrimSpace(job.BusinessStatus))
+	switch status {
+	case "updated":
+		return "正常"
+	case "syncing":
+		return "正在整理"
+	case "needs_review":
+		return "待复核"
+	case "failed":
+		return "异常"
+	default:
+		if !job.Enabled {
+			return "关闭"
+		}
+		if strings.ToLower(strings.TrimSpace(job.Status)) == "running" {
+			return "开启"
+		}
+		return "开启"
+	}
 }
 
 func (a *businessAPI) pluginsRouter(w http.ResponseWriter, r *http.Request, parts []string) {
@@ -811,6 +1211,10 @@ func (a *businessAPI) updatePlugin(w http.ResponseWriter, r *http.Request, id st
 }
 
 func (a *businessAPI) jobsRouter(w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) == 1 && parts[0] == "runtime" {
+		a.jobsRuntimeHandler(w, r)
+		return
+	}
 	if len(parts) == 0 || parts[0] == "" {
 		if r.Method == http.MethodGet {
 			items, err := listRecords[Job](r.Context(), a.store, "jobs")
@@ -847,17 +1251,32 @@ func (a *businessAPI) jobsRouter(w http.ResponseWriter, r *http.Request, parts [
 			writeAPIError(w, http.StatusBadRequest, "INVALID_JOB", "任务名称和类型不能为空")
 			return
 		}
+		if strings.TrimSpace(item.Prompt) == "" {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_JOB", "任务 Prompt 不能为空，必须明确任务实际执行内容")
+			return
+		}
 		id, err := a.store.nextSequence(r.Context(), "jobs", "JOB", 4)
 		if err != nil {
 			writeBusinessError(w, err)
 			return
 		}
-		item.ID, item.Status, item.UpdatedAt = id, "Ready", currentText()
+		item.ID, item.Status, item.UpdatedAt = id, "unsynced", currentText()
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		item, err = a.syncOneJob(ctx, item)
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
 		if err := a.store.create(r.Context(), "jobs", id, item); err != nil {
 			writeBusinessError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, item)
+		return
+	}
+	if len(parts) == 2 && (parts[1] == "enable" || parts[1] == "disable" || parts[1] == "run" || parts[1] == "runs") {
+		a.jobRuntimeAction(w, r, parts[0], parts[1])
 		return
 	}
 	var item Job
@@ -883,6 +1302,15 @@ func (a *businessAPI) jobsRouter(w http.ResponseWriter, r *http.Request, parts [
 		if item.BuiltIn {
 			writeAPIError(w, http.StatusConflict, "BUILTIN_JOB", "内置任务不能删除，只能停用")
 			return
+		}
+		if item.OpenClawID != "" {
+			ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+			defer cancel()
+			if _, err := a.openClaw.service.CronRemove(ctx, item.OpenClawID); err != nil &&
+				!errors.Is(err, orchestrator.ErrUnavailable) && !errors.Is(err, context.DeadlineExceeded) {
+				writeOpenClawError(w, err)
+				return
+			}
 		}
 		if err := a.store.softDelete(r.Context(), "jobs", item.ID); err != nil {
 			writeBusinessError(w, err)
@@ -923,9 +1351,28 @@ func (a *businessAPI) updateJob(w http.ResponseWriter, r *http.Request, id strin
 	if strings.TrimSpace(request.Prompt) == "" {
 		request.Prompt = item.Prompt
 	}
+	if item.BuiltIn {
+		// Built-in jobs are business-owned definitions. Their name, Agent and
+		// Prompt can only change through the owning feature settings, not the
+		// generic scheduler editor.
+		request.Name = item.Name
+		request.AgentID = item.AgentID
+		request.Prompt = item.Prompt
+	}
+	request.OpenClawID = item.OpenClawID
+	request.ScheduleKind = firstNonEmpty(request.ScheduleKind, item.ScheduleKind)
+	request.ScheduleValue = firstNonEmpty(request.ScheduleValue, item.ScheduleValue)
+	request.Timezone = firstNonEmpty(request.Timezone, item.Timezone)
 	request.LastRun = firstNonEmpty(request.LastRun, item.LastRun)
 	request.NextRun = firstNonEmpty(request.NextRun, item.NextRun)
 	request.LastResult = firstNonEmpty(request.LastResult, item.LastResult)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	request, err := a.syncOneJob(ctx, request)
+	if err != nil {
+		writeOpenClawError(w, err)
+		return
+	}
 	if err := a.store.put(r.Context(), "jobs", item.ID, request); err != nil {
 		writeBusinessError(w, err)
 		return
@@ -960,6 +1407,27 @@ func (a *businessAPI) settingsRouter(w http.ResponseWriter, r *http.Request, par
 		writeAPIError(w, http.StatusBadRequest, "INVALID_NEWS_LIMIT", "每次展示数量必须是 1-100")
 		return
 	}
+	if request.RecommendationShowLimit == 0 {
+		request.RecommendationShowLimit = 5
+	}
+	if request.RecommendationShowLimit < 1 || request.RecommendationShowLimit > 20 {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_RECOMMENDATION_LIMIT", "为你推荐每次查询数量必须是 1-20")
+		return
+	}
+	if request.DiscoveryShowLimit == 0 {
+		request.DiscoveryShowLimit = 10
+	}
+	if request.DiscoveryShowLimit < 1 || request.DiscoveryShowLimit > 100 {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_DISCOVERY_LIMIT", "本地客户发现每次最多返回 1-100 条")
+		return
+	}
+	if request.NewsFetchLimit == 0 {
+		request.NewsFetchLimit = 5
+	}
+	if request.NewsFetchLimit < 1 || request.NewsFetchLimit > 100 {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_NEWS_FETCH_LIMIT", "每次获取数量必须是 1-100")
+		return
+	}
 	if !validNewsFrequency(request.NewsFrequency) {
 		writeAPIError(w, http.StatusBadRequest, "INVALID_NEWS_FREQUENCY", "获取频率不受支持")
 		return
@@ -975,7 +1443,14 @@ func (a *businessAPI) settingsRouter(w http.ResponseWriter, r *http.Request, par
 		return
 	}
 	a.store.audit(r.Context(), "update", "setting", "preferences", requestOperator(r), nil)
-	writeJSON(w, http.StatusOK, request)
+	response := preferencesSaveResponse(request, "新闻与推荐设置已保存，OpenClaw 定时任务将在后台同步。", nil)
+	response["automation"] = a.overviewAutomationData(r.Context())
+	go func(preferences UserPreferences) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_, _ = a.syncPreferenceAutomation(ctx, preferences)
+	}(request)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func validNewsFrequency(value string) bool {
@@ -1067,6 +1542,16 @@ func (a *businessAPI) settingsModelRouter(w http.ResponseWriter, r *http.Request
 						return
 					}
 				}
+			}
+		}
+		if request.Provider != "" {
+			if err := a.openClaw.service.ConfigureWebSearchForModelProvider(ctx, request.Provider, request.APIKey); err != nil {
+				a.saveModelTestState(r.Context(), request.Model, false, modelTestFailureMessage(err, "公开来源能力写入 OpenClaw 失败"))
+				response["stage"] = "web-search"
+				response["message"] = modelTestFailureMessage(err, "公开来源能力写入 OpenClaw 失败")
+				response["durationMs"] = time.Since(started).Milliseconds()
+				writeJSON(w, http.StatusOK, response)
+				return
 			}
 		}
 		models := a.openClaw.service.ModelSnapshot()
@@ -1178,6 +1663,12 @@ func (a *businessAPI) settingsModelRouter(w http.ResponseWriter, r *http.Request
 	request.EndpointMode = endpointMode
 	if endpointApply {
 		if err := a.openClaw.service.SetProviderBaseURL(request.Provider, providerBaseURL); err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+	}
+	if request.Provider != "" {
+		if err := a.openClaw.service.ConfigureWebSearchForModelProvider(ctx, request.Provider, request.APIKey); err != nil {
 			writeOpenClawError(w, err)
 			return
 		}

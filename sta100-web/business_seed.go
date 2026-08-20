@@ -56,22 +56,12 @@ func (s *businessStore) seed(ctx context.Context) error {
 		{ID: "FILE-0003", Name: "EU_Battery_Regulation_2026.pdf", Category: "法规", Tags: []string{"欧盟", "E-bike"}, Size: "3.1 MB", Source: "通用知识库", Status: "Indexed", Updated: "2026-08-09 12:45"},
 		{ID: "FILE-0004", Name: "Shimano_Compatibility_List.xlsx", Category: "产品资料", Tags: []string{"兼容", "组件"}, Size: "846 KB", Source: "客户上传", Status: "Review", Updated: "2026-08-08 18:33"},
 	}
-	news := []NewsItem{
-		{ID: "NEWS-0001", Category: "欧洲市场", Title: "欧洲自行车产业进入补库存周期，渠道更关注小批量和快速交付", Summary: "多家欧洲经销商在 2026 年下半年调整采购节奏，订单结构从大批量预采转向小批量、多批次。", Source: "Bike Europe", Time: "2026-08-10 09:10", Relevance: "96%"},
-		{ID: "NEWS-0002", Category: "法规", Title: "欧盟更新电池尽职调查实施指引，E-bike 供应链资料需同步准备", Summary: "新指引强化材料来源、碳足迹和供应链证明要求。", Source: "EUR-Lex", Time: "2026-08-10 08:35", Relevance: "93%"},
-		{ID: "NEWS-0003", Category: "智能骑行", Title: "无线电子变速与功率数据融合成为高端整车配置趋势", Summary: "整车厂正在把兼容性和训练数据完整度作为高端产品卖点。", Source: "Cycling Industry News", Time: "2026-08-09 17:40", Relevance: "89%"},
-		{ID: "NEWS-0004", Category: "渠道", Title: "北欧经销商加快建设线上线下一体的维修服务网络", Summary: "服务能力和备件响应速度正在影响品牌进入门槛。", Source: "Nordic Cycling", Time: "2026-08-09 15:20", Relevance: "84%"},
-		{ID: "NEWS-0005", Category: "产品", Title: "欧洲城市通勤市场对轻量化 E-bike 的关注持续上升", Summary: "重量、可维护性和电池合规成为渠道选品主要指标。", Source: "E-bike News", Time: "2026-08-09 11:05", Relevance: "82%"},
-	}
-	recommendations := []Recommendation{
-		{ID: "REC-0001", Title: "Eurobike 2026 展商名录新增 86 家欧洲采购商", Desc: "与欧洲经销商、整车进口商关注条件匹配，可进一步生成客户候选清单。", Source: "Eurobike", Type: "展会情报", Time: "12 分钟前"},
-		{ID: "REC-0002", Title: "欧盟电池法规尽职调查条款进入新执行阶段", Desc: "可能影响 E-bike 电池产品资料与供应商声明，建议同步检查现有模板。", Source: "EUR-Lex", Type: "法规", Time: "36 分钟前"},
-		{ID: "REC-0003", Title: "德国通勤 E-bike 价格带出现结构性变化", Desc: "中端价格段热度上升，适合评估产品组合和报价策略。", Source: "Bike Europe", Type: "市场趋势", Time: "1 小时前"},
-	}
+	news := []NewsItem{}
+	recommendations := []Recommendation{}
 	jobs := []Job{
-		{ID: "JOB-RECOMMEND", Name: "每日推荐更新", Kind: "recommendations", Description: "定时汇总本地推荐缓存，后续接入客户确认的数据源。", AgentID: "sta100-coordinator", Prompt: "根据当前关注国家、主题和本地业务数据生成推荐摘要。", Schedule: "每 60 分钟", Enabled: true, BuiltIn: true, Status: "WaitingSource", UpdatedAt: "2026-08-10 08:00"},
-		{ID: "JOB-WEEKLY", Name: "智能体周报", Kind: "weekly_report", Description: "读取本机 Agent 会话、Token 使用和业务审计日志，生成周报草稿。", AgentID: "sta100-coordinator", Prompt: "汇总最近 7 天 STA-100 智能体使用情况、关键业务操作和待跟进事项。", Schedule: "每周", Enabled: true, BuiltIn: true, Status: "Ready", UpdatedAt: "2026-08-10 08:00"},
-		{ID: "JOB-NEWS", Name: "行业新闻更新", Kind: "news", Description: "按客户确认的新闻来源和频率抓取行业新闻，当前来源规则待确认。", AgentID: "market-analyzer", Prompt: "围绕骑行行业、欧洲渠道、法规和产品趋势整理新闻候选。", Schedule: "每 60 分钟", Enabled: true, BuiltIn: true, Status: "WaitingSource", UpdatedAt: "2026-08-10 08:00"},
+		{ID: "JOB-RECOMMEND", Name: "每日推荐更新", Kind: "recommendations", Description: "定时汇总本地推荐缓存，后续接入客户确认的数据源。", AgentID: "sta100-recommend-curator", Prompt: "根据当前关注国家、主题和本地业务数据生成推荐摘要。", Schedule: "每 60 分钟", Enabled: true, BuiltIn: true, Status: "WaitingSource", UpdatedAt: "2026-08-10 08:00"},
+		{ID: "JOB-WEEKLY", Name: "智能体周报", Kind: "weekly_report", Description: "调用专门的周报 Agent 汇总本机 Agent 会话、Token 使用和业务审计日志，生成周报草稿。", AgentID: "sta100-weekly-report", Prompt: "汇总最近 7 天 STA-100 智能体使用情况、关键业务操作和待跟进事项。", Schedule: "每周", Enabled: true, BuiltIn: true, Status: "Ready", UpdatedAt: "2026-08-10 08:00"},
+		{ID: "JOB-NEWS", Name: "行业新闻更新", Kind: "news", Description: "按客户确认的新闻来源和频率抓取行业新闻，当前来源规则待确认。", AgentID: "sta100-news-curator", Prompt: "围绕骑行行业、欧洲渠道、法规和产品趋势整理新闻候选。", Schedule: "每 60 分钟", Enabled: true, BuiltIn: true, Status: "WaitingSource", UpdatedAt: "2026-08-10 08:00"},
 		{ID: "JOB-INDEX", Name: "数据索引维护", Kind: "index", Description: "扫描本机私有文件元数据，正式正文解析和向量索引等待原始数据格式。", AgentID: "sta100-knowledge", Prompt: "检查本地私有文件是否需要解析、分类、去重和索引。", Schedule: "每天", Enabled: true, BuiltIn: true, Status: "WaitingData", UpdatedAt: "2026-08-10 08:00"},
 	}
 	plugins := []Plugin{
@@ -92,14 +82,17 @@ func (s *businessStore) seed(ctx context.Context) error {
 		}
 	}
 	preferences := UserPreferences{
-		RecommendationEnabled: true,
-		NewsShowLimit:         20,
-		NewsFrequency:         "1小时",
-		NewsCountries:         "德国、法国、波兰、瑞典",
-		NewsTopics:            "E-bike、智能骑行、经销商、欧盟法规",
-		NewsSources:           "EUR-Lex\nBike Europe\nCycling Industry News\nEurobike",
-		AgentAllowlists:       map[string][]string{},
-		AgentModelOverrides:   map[string]string{},
+		RecommendationEnabled:   true,
+		RecommendationShowLimit: 5,
+		DiscoveryShowLimit:      10,
+		NewsFetchLimit:          5,
+		NewsShowLimit:           20,
+		NewsFrequency:           "1小时",
+		NewsCountries:           "德国、法国、波兰、瑞典",
+		NewsTopics:              "E-bike、智能骑行、经销商、欧盟法规",
+		NewsSources:             "EUR-Lex\nBike Europe\nCycling Industry News\nEurobike",
+		AgentAllowlists:         map[string][]string{},
+		AgentModelOverrides:     map[string]string{},
 	}
 	return s.putSetting(ctx, "preferences", preferences)
 }

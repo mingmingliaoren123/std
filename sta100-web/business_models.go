@@ -132,52 +132,82 @@ type PrivateFile struct {
 }
 
 type AgentMessageRecord struct {
-	ID         string   `json:"id"`
-	AgentID    string   `json:"agentId"`
-	SessionKey string   `json:"sessionKey"`
-	Role       string   `json:"role"`
-	Text       string   `json:"text"`
-	Sources    []string `json:"sources,omitempty"`
-	RunID      string   `json:"runId,omitempty"`
-	CreatedAt  string   `json:"createdAt"`
+	ID              string                   `json:"id"`
+	AgentID         string                   `json:"agentId"`
+	SessionKey      string                   `json:"sessionKey"`
+	Role            string                   `json:"role"`
+	Text            string                   `json:"text"`
+	Sources         []string                 `json:"sources,omitempty"`
+	RunID           string                   `json:"runId,omitempty"`
+	Pipeline        []assistantPipelineStage `json:"pipeline,omitempty"`
+	TotalDurationMs int64                    `json:"totalDurationMs,omitempty"`
+	Error           bool                     `json:"error,omitempty"`
+	Retry           string                   `json:"retry,omitempty"`
+	Model           string                   `json:"model,omitempty"`
+	Provider        string                   `json:"provider,omitempty"`
+	CreatedAt       string                   `json:"createdAt"`
 }
 
 type NewsItem struct {
-	ID        string `json:"id"`
-	Category  string `json:"category"`
-	Title     string `json:"title"`
-	Summary   string `json:"summary"`
-	Source    string `json:"source"`
-	SourceURL string `json:"sourceUrl,omitempty"`
-	Time      string `json:"time"`
-	Relevance string `json:"relevance"`
+	ID          string `json:"id"`
+	Category    string `json:"category"`
+	Title       string `json:"title"`
+	Summary     string `json:"summary"`
+	Content     string `json:"content,omitempty"`
+	Source      string `json:"source"`
+	SourceURL   string `json:"sourceUrl,omitempty"`
+	Time        string `json:"time"`
+	Relevance   string `json:"relevance"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
+	GeneratedBy string `json:"generatedBy,omitempty"`
+	DataStatus  string `json:"dataStatus,omitempty"`
 }
 
 type Recommendation struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Desc   string `json:"desc"`
-	Source string `json:"source"`
-	Type   string `json:"type"`
-	Time   string `json:"time"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Desc        string `json:"desc"`
+	Why         string `json:"why,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+	Content     string `json:"content,omitempty"`
+	Source      string `json:"source"`
+	SourceURL   string `json:"sourceUrl,omitempty"`
+	Type        string `json:"type"`
+	Time        string `json:"time"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
+	GeneratedBy string `json:"generatedBy,omitempty"`
+	DataStatus  string `json:"dataStatus,omitempty"`
 }
 
 type Job struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	Description string `json:"description,omitempty"`
-	AgentID     string `json:"agentId,omitempty"`
-	Prompt      string `json:"prompt,omitempty"`
-	Schedule    string `json:"schedule"`
-	Enabled     bool   `json:"enabled"`
-	BuiltIn     bool   `json:"builtIn"`
-	LastRun     string `json:"lastRun,omitempty"`
-	NextRun     string `json:"nextRun,omitempty"`
-	Status      string `json:"status"`
-	Error       string `json:"error,omitempty"`
-	LastResult  string `json:"lastResult,omitempty"`
-	UpdatedAt   string `json:"updatedAt"`
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	Kind                  string `json:"kind"`
+	Description           string `json:"description,omitempty"`
+	AgentID               string `json:"agentId,omitempty"`
+	Prompt                string `json:"prompt,omitempty"`
+	Schedule              string `json:"schedule"`
+	Enabled               bool   `json:"enabled"`
+	BuiltIn               bool   `json:"builtIn"`
+	LastRun               string `json:"lastRun,omitempty"`
+	NextRun               string `json:"nextRun,omitempty"`
+	Status                string `json:"status"`
+	Error                 string `json:"error,omitempty"`
+	LastResult            string `json:"lastResult,omitempty"`
+	UpdatedAt             string `json:"updatedAt"`
+	OpenClawID            string `json:"openclawId,omitempty"`
+	ScheduleKind          string `json:"scheduleKind,omitempty"`
+	ScheduleValue         string `json:"scheduleValue,omitempty"`
+	Timezone              string `json:"timezone,omitempty"`
+	SyncStatus            string `json:"syncStatus,omitempty"`
+	SyncMessage           string `json:"syncMessage,omitempty"`
+	OutputTarget          string `json:"outputTarget,omitempty"`
+	BusinessStatus        string `json:"businessStatus,omitempty"`
+	BusinessMessage       string `json:"businessMessage,omitempty"`
+	BusinessUpdatedAt     string `json:"businessUpdatedAt,omitempty"`
+	LastProcessedRunAtMs  int64  `json:"lastProcessedRunAtMs,omitempty"`
+	LastRunID             string `json:"lastRunId,omitempty"`
+	BusinessResultVersion int    `json:"businessResultVersion,omitempty"`
 }
 
 type Plugin struct {
@@ -189,13 +219,25 @@ type Plugin struct {
 	UpdatedAt    string   `json:"updatedAt"`
 }
 
+type Task struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Source    string `json:"source,omitempty"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
 type UserPreferences struct {
-	RecommendationEnabled bool                `json:"recommendationEnabled"`
-	NewsShowLimit         int                 `json:"newsShowLimit"`
-	NewsFrequency         string              `json:"newsFrequency"`
-	NewsCountries         string              `json:"newsCountries"`
-	NewsTopics            string              `json:"newsTopics"`
-	NewsSources           string              `json:"newsSources"`
-	AgentAllowlists       map[string][]string `json:"agentAllowlists"`
-	AgentModelOverrides   map[string]string   `json:"agentModelOverrides"`
+	RecommendationEnabled   bool                `json:"recommendationEnabled"`
+	RecommendationShowLimit int                 `json:"recommendationShowLimit"`
+	DiscoveryShowLimit      int                 `json:"discoveryShowLimit"`
+	NewsFetchLimit          int                 `json:"newsFetchLimit"`
+	NewsShowLimit           int                 `json:"newsShowLimit"`
+	NewsFrequency           string              `json:"newsFrequency"`
+	NewsCountries           string              `json:"newsCountries"`
+	NewsTopics              string              `json:"newsTopics"`
+	NewsSources             string              `json:"newsSources"`
+	AgentAllowlists         map[string][]string `json:"agentAllowlists"`
+	AgentModelOverrides     map[string]string   `json:"agentModelOverrides"`
 }

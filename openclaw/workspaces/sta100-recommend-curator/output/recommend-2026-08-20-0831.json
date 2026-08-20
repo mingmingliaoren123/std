@@ -1,0 +1,56 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "recommendations",
+  "items": [
+    {
+      "title": "Lapierre 法国司法重整独立路径",
+      "why": "法国Lapierre已脱离荷兰Accell破产程序单独申请redressement judiciaire，重整口径与德方Haibike不同，需要按法方债权与程序重新评估客户敞口。",
+      "detail": "Bike Europe 8月7日报道，Accell荷兰总部进入付款暂停后，国际子公司各自寻求出路：法国Cycles Lapierre已申请redressement judiciaire司法重整，英国Raleigh已发出拟任命管理人的通知。Lapierre脱离荷兰主案意味着法国客户的供应商谈判口径切换为法方司法重整代表与可能的重整投资人，付款节奏、订单延续和品牌延续性的判断不能再套用Accell集团承诺。建议立即向Lapierre法国主体核对未交付订单、信用额度和定金归属，区分已开票应收与在途PO；并准备两套备选合作方案——重整延续版与买家切换版，备货节奏按Q4订单可分批延期方式重新排产；同步关注法方重整观察期内的资产处置公告与意向买家接洽窗口。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52945/lapierre-and-raleigh-seek-separate-restructuring-paths-following-accell-insolvency",
+      "type": "客户风险分拆",
+      "time": "2026-08-20T08:31+08:00",
+      "desc": "Lapierre法国单独司法重整，需按法方程序重做订单与应收核对。"
+    },
+    {
+      "title": "Quanta Capital 拟整体收购 Accell",
+      "why": "爱尔兰投资与资产管理公司Quanta Capital已公开表达整体收购意向，是Lapierre、Haibike等德法品牌可能买家方向的重要信号。",
+      "detail": "Bike Europe 8月11日报道，总部位于都柏林的投资与资产管理公司Quanta Capital已确认对Accell Group的整体收购兴趣。Accell于2026年8月5日进入正式破产程序，此前与Dutech Holdings的收购机会已告失败。Quanta作为整体买家而非单一品牌买家的取向，会直接决定德法品牌Koga、Batavus、Lapierre与Haibike是被打包保留还是被分拆出售。建议跟踪Quanta在欧盟与英国竞争监管口径下的并购申报时点、融资来源和产业协同计划，提前判断德法客户未来3-6个月的所有权结构；同时按品牌维度准备两版接洽资料——延续合作版与新东家接洽版，确保所有权变更时可立即重启报价与认证窗口。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52951/irish-investment-firm-eyes-acquisition-of-accell-group",
+      "type": "并购信号",
+      "time": "2026-08-20T08:31+08:00",
+      "desc": "Quanta Capital表达整体收购Accell意向，德法品牌未来所有权结构待定。"
+    },
+    {
+      "title": "Tianjin Fuji-Ta 上交所 IPO",
+      "why": "中国自行车OEM龙头富士达完成上交所IPO，募集资金或将扩张欧标整车与E-bike代工产能，对德法品牌供应链与议价权构成新一轮信号。",
+      "detail": "Bike Europe 8月12日报道，被国内称为自行车行业富士康的天津富士达自行车制造商于2026年8月6日在上海证券交易所完成IPO，发行价CNY 17.46约EUR 2.28，当日盘中高点达CNY 45.45约EUR 5.94。富士达在欧标城市车与E-bike整车代工上有较大份额，IPO募资到位后产能、价格策略和客户拓展节奏都可能调整，对德国、法国整车品牌的中长期供应格局有直接影响。建议向富士达对接窗口核实欧标车型2027产能锁定窗口、铝合金车架和E-bike整线交期变化，以及IPO后是否会切入电机或电控组件；同时按品牌客户清单梳理订单对富士达敞口，预留1-2家备选OEM作为Q1 2027的产能备份，避免IPO后议价被动。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52966/chinese-oem-manufacturer-fujita-celebrates-successful-ipo",
+      "type": "上游产能信号",
+      "time": "2026-08-20T08:31+08:00",
+      "desc": "富士达上交所IPO募资落地，欧标E-bike OEM产能与议价将进入调整期。"
+    },
+    {
+      "title": "Tenways 港交所递表 + 亚洲资本入欧",
+      "why": "Tenways递交港交所招股书叠加富士达IPO与Accell易主，亚洲资本正在以不同路径进入欧洲自行车与E-bike产业链。",
+      "detail": "Bike Europe 8月14日报道，文章讨论了Tenways、富士达与Accell交易背景下，亚洲下一阶段在欧洲自行车产业中的角色变化：Tenways在荷兰设立总部、深圳南山做研发并向港交所递交招股书，富士达在上交所完成IPO，Accell则由爱尔兰资本主导整合。三条线同时推进意味着欧洲整车与E-bike品牌的资本结构、研发与产品定义正在被亚洲资本和供应链重新加权。对中国供应商而言，这既是欧洲品牌整合带来的客户重新洗牌，也是Tenways等亚洲血统欧洲品牌成为新合作对象的窗口；建议梳理本公司可向Tenways、富士达欧标业务、Accell潜在新东家三方同步推送的产品清单，准备中、英、德、法四语产品资料与认证文件，并在Q4前完成2-3个目标客户的初步接洽。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52982/from-factory-floor-to-trading-floor-what-comes-after-the-capital",
+      "type": "行业资本结构",
+      "time": "2026-08-20T08:31+08:00",
+      "desc": "Tenways港交所递表叠加富士达IPO，亚洲资本从供应链端切入欧洲E-bike产业。"
+    },
+    {
+      "title": "WS WeSports 北欧 Q2 +55%",
+      "why": "北欧综合体育与骑行零售商WS WeSports在2026年Q2同比净销售+55%、欧元调整+21.6%，叠加Bike24德国+20.1%可视为欧洲区域零售回暖的横向参照。",
+      "detail": "Bike Europe 8月19日报道，Nasdaq First North Premier Growth Market上市的北欧运动与骑行零售商WS WeSports Scandinavia披露：2026年Q1净销售同比+51.8%，Q2同比+55.0%、按汇率调整后+21.6%。结合8月18日Bike24德国Q2营收9610万欧元同比+20.1%、本地化市场+29.7%的数据，欧洲区域零售端在Q2呈现同步回暖迹象，但WS WeSports尚未披露E-bike品类单独占比，外推德国或法国整体E-bike消费全面复苏仍不充分。建议按品类拆分本公司在德国、法国、北欧客户Q3动销数据，区分配件、整车与中高端E-bikeSKU的补货节奏；Q4备货以中端价格段与高复购配件为主，谨慎在高端车型加库存，待Eurobike 2027前两个月的订单确认后再调整2027产能。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52997/sales-and-ma-strategy-secures-ws-wesports-double-digit-growth",
+      "type": "同行回暖信号",
+      "time": "2026-08-20T08:31+08:00",
+      "desc": "WS WeSports北欧Q2净销售+55%，与Bike24德国+20.1%同步显示欧洲零售Q2回暖。"
+    }
+  ]
+}

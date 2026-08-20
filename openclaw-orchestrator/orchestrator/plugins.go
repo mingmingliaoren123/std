@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 func (s *Service) Plugins(ctx context.Context) ([]Plugin, error) {
@@ -26,11 +27,36 @@ func (s *Service) Plugins(ctx context.Context) ([]Plugin, error) {
 }
 
 func (s *Service) Channels(ctx context.Context) ([]Channel, error) {
+	_ = ctx
 	items := fixedChannels()
 	enabled := s.pluginEnabledState()
+	s.pluginMu.Lock()
+	inventory := append([]pluginInventoryEntry(nil), s.pluginCache...)
+	s.pluginMu.Unlock()
 	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	for index := range items {
+		pluginID, installSpec, bindingMode := channelIntegrationMetadata(items[index].ID)
+		items[index].PluginID = pluginID
+		items[index].InstallSpec = installSpec
+		items[index].BindingMode = bindingMode
+		items[index].CanInstall = installSpec != "" || pluginID != ""
+		items[index].CanUninstall = pluginID != ""
 		items[index].Enabled = enabled[items[index].ID]
+		if items[index].Enabled {
+			items[index].Installed = true
+		}
+		if len(inventory) > 0 {
+			if existing, ok := findChannelPlugin(inventory, items[index].ID, pluginID); ok {
+				items[index].PluginID = existing.ID
+				items[index].Installed = true
+				items[index].Enabled = existing.Enabled || existing.Status == "loaded"
+				items[index].Origin = existing.Origin
+			} else {
+				items[index].Installed = false
+				items[index].Enabled = false
+				items[index].Origin = "installable"
+			}
+		}
 		if items[index].Installed {
 			items[index].Configured, items[index].AccountCount = s.configuredChannelState(items[index].ID)
 		}
@@ -43,6 +69,216 @@ func (s *Service) Channels(ctx context.Context) ([]Channel, error) {
 		}
 	}
 	return items, nil
+}
+
+type pluginInventoryEntry struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Version     string   `json:"version"`
+	Origin      string   `json:"origin"`
+	Status      string   `json:"status"`
+	Enabled     bool     `json:"enabled"`
+	ChannelIDs  []string `json:"channelIds"`
+}
+
+func channelIntegrationMetadata(channel string) (pluginID, installSpec, bindingMode string) {
+	metadata := map[string][3]string{
+		"wecom":                {"wecom-openclaw-plugin", "@wecom/wecom-openclaw-plugin@2026.5.7", "config"},
+		"yuanbao":              {"openclaw-plugin-yuanbao", "openclaw-plugin-yuanbao@2.15.0", "config"},
+		"openclaw-weixin":      {"openclaw-weixin", "@tencent-weixin/openclaw-weixin@2.4.6", "login"},
+		"openclaw-zaloclawbot": {"openclaw-zaloclawbot", "@zalo-platforms/openclaw-zaloclawbot@0.1.4", "login"},
+		"clickclack":           {"clickclack", "@openclaw/clickclack", "config"},
+		"discord":              {"discord", "@openclaw/discord", "config"},
+		"feishu":               {"feishu", "@openclaw/feishu", "qr"},
+		"googlechat":           {"googlechat", "@openclaw/googlechat", "config"},
+		"irc":                  {"irc", "@openclaw/irc", "config"},
+		"line":                 {"line", "@openclaw/line", "config"},
+		"matrix":               {"matrix", "@openclaw/matrix", "config"},
+		"mattermost":           {"mattermost", "@openclaw/mattermost", "config"},
+		"msteams":              {"msteams", "@openclaw/msteams", "config"},
+		"nextcloud-talk":       {"nextcloud-talk", "@openclaw/nextcloud-talk", "config"},
+		"nostr":                {"nostr", "@openclaw/nostr", "config"},
+		"qqbot":                {"qqbot", "@openclaw/qqbot", "config"},
+		"raft":                 {"raft", "@openclaw/raft", "config"},
+		"signal":               {"signal", "@openclaw/signal", "config"},
+		"slack":                {"slack", "@openclaw/slack", "config"},
+		"sms":                  {"sms", "@openclaw/sms", "config"},
+		"synology-chat":        {"synology-chat", "@openclaw/synology-chat", "config"},
+		"telegram":             {"telegram", "@openclaw/telegram", "token"},
+		"tlon":                 {"tlon", "@openclaw/tlon", "config"},
+		"twitch":               {"twitch", "@openclaw/twitch", "config"},
+		"whatsapp":             {"whatsapp", "@openclaw/whatsapp", "login"},
+		"zalo":                 {"zalo", "@openclaw/zalo", "config"},
+		"zalouser":             {"zalouser", "@openclaw/zalouser", "config"},
+	}
+	channel = strings.TrimSpace(strings.ToLower(channel))
+	if value, ok := metadata[channel]; ok {
+		return value[0], value[1], value[2]
+	}
+	return channel, "", "config"
+}
+
+func (s *Service) pluginInventory(ctx context.Context) ([]pluginInventoryEntry, error) {
+	s.pluginMu.Lock()
+	if len(s.pluginCache) > 0 && time.Since(s.pluginAt) < 5*time.Second {
+		items := append([]pluginInventoryEntry(nil), s.pluginCache...)
+		s.pluginMu.Unlock()
+		return items, nil
+	}
+	s.pluginMu.Unlock()
+
+	out, err := s.run(ctx, nil, "plugins", "list", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Plugins []pluginInventoryEntry `json:"plugins"`
+	}
+	if err := json.Unmarshal(out, &response); err != nil {
+		return nil, fmt.Errorf("%w: plugins list: %v", ErrInvalidResponse, err)
+	}
+	s.pluginMu.Lock()
+	s.pluginCache = append([]pluginInventoryEntry(nil), response.Plugins...)
+	s.pluginAt = time.Now()
+	s.pluginMu.Unlock()
+	return response.Plugins, nil
+}
+
+func (s *Service) invalidatePluginInventory() {
+	s.pluginMu.Lock()
+	s.pluginCache = nil
+	s.pluginAt = time.Time{}
+	s.pluginMu.Unlock()
+}
+
+func findChannelPlugin(inventory []pluginInventoryEntry, channel string, pluginID string) (pluginInventoryEntry, bool) {
+	channel = strings.TrimSpace(strings.ToLower(channel))
+	for _, item := range inventory {
+		if item.ID == pluginID {
+			return item, true
+		}
+		for _, channelID := range item.ChannelIDs {
+			if strings.EqualFold(channelID, channel) {
+				return item, true
+			}
+		}
+	}
+	return pluginInventoryEntry{}, false
+}
+
+func (s *Service) InstallChannel(ctx context.Context, channel, packageSpec string) (map[string]any, error) {
+	channel = strings.TrimSpace(strings.ToLower(channel))
+	pluginID, defaultSpec, _ := channelIntegrationMetadata(channel)
+	if pluginID == "" {
+		return nil, errors.New("通道 ID 不能为空")
+	}
+	inventory, err := s.pluginInventory(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("读取 OpenClaw 插件目录失败: %w", err)
+	}
+	if existing, ok := findChannelPlugin(inventory, channel, pluginID); ok {
+		if existing.Enabled || existing.Status == "loaded" {
+			return channelPluginResult(channel, existing, "already_enabled", "通道插件已经安装并启用"), nil
+		}
+		if _, err := s.run(ctx, nil, "plugins", "enable", existing.ID); err != nil {
+			return nil, fmt.Errorf("启用 OpenClaw 通道插件失败: %w", err)
+		}
+		verified, err := s.verifyChannelPlugin(ctx, channel, existing.ID, true)
+		if err != nil {
+			return nil, err
+		}
+		return channelPluginResult(channel, verified, "enabled", "通道插件已启用并通过 OpenClaw 目录复核"), nil
+	}
+	spec := strings.TrimSpace(packageSpec)
+	if spec == "" {
+		spec = defaultSpec
+	}
+	if spec == "" {
+		return nil, fmt.Errorf("OpenClaw 当前未提供 %s 的默认安装包，请填写插件包名或 npm spec", channel)
+	}
+	if _, err := s.run(ctx, nil, "plugins", "install", spec); err != nil {
+		return nil, fmt.Errorf("安装 OpenClaw 通道插件失败: %w", err)
+	}
+	s.invalidatePluginInventory()
+	installed, err := s.verifyChannelPlugin(ctx, channel, pluginID, false)
+	if err != nil {
+		return nil, fmt.Errorf("OpenClaw 安装命令完成，但安装结果复核失败: %w", err)
+	}
+	if _, err := s.run(ctx, nil, "plugins", "enable", installed.ID); err != nil {
+		return nil, fmt.Errorf("安装后启用 OpenClaw 通道插件失败: %w", err)
+	}
+	verified, err := s.verifyChannelPlugin(ctx, channel, installed.ID, true)
+	if err != nil {
+		return nil, err
+	}
+	result := channelPluginResult(channel, verified, "installed", "通道插件已安装、启用并通过 OpenClaw 目录复核")
+	result["installSpec"] = spec
+	return result, nil
+}
+
+func (s *Service) UninstallChannel(ctx context.Context, channel string) (map[string]any, error) {
+	channel = strings.TrimSpace(strings.ToLower(channel))
+	pluginID, _, _ := channelIntegrationMetadata(channel)
+	inventory, err := s.pluginInventory(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("读取 OpenClaw 插件目录失败: %w", err)
+	}
+	existing, ok := findChannelPlugin(inventory, channel, pluginID)
+	if !ok {
+		return map[string]any{"updated": true, "channel": channel, "action": "already_uninstalled", "message": "通道插件当前未安装"}, nil
+	}
+	if existing.Origin == "bundled" {
+		if _, err := s.run(ctx, nil, "plugins", "disable", existing.ID); err != nil {
+			return nil, fmt.Errorf("停用 OpenClaw 内置通道插件失败: %w", err)
+		}
+		verified, err := s.verifyChannelPlugin(ctx, channel, existing.ID, false)
+		if err != nil {
+			return nil, err
+		}
+		result := channelPluginResult(channel, verified, "disabled", "内置通道不能删除，已停用并通过 OpenClaw 目录复核")
+		result["verifiedDisabled"] = !verified.Enabled && verified.Status != "loaded"
+		return result, nil
+	}
+	if _, err := s.run(ctx, nil, "plugins", "uninstall", existing.ID, "--force"); err != nil {
+		return nil, fmt.Errorf("卸载 OpenClaw 通道插件失败: %w", err)
+	}
+	s.invalidatePluginInventory()
+	after, err := s.pluginInventory(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("卸载命令完成，但无法复核 OpenClaw 插件目录: %w", err)
+	}
+	if _, ok := findChannelPlugin(after, channel, existing.ID); ok {
+		return nil, fmt.Errorf("卸载命令完成，但 OpenClaw 插件目录仍显示该通道已安装")
+	}
+	result := channelPluginResult(channel, existing, "uninstalled", "通道插件已卸载并通过 OpenClaw 目录复核")
+	result["verified"] = true
+	return result, nil
+}
+
+func (s *Service) verifyChannelPlugin(ctx context.Context, channel, pluginID string, requireEnabled bool) (pluginInventoryEntry, error) {
+	s.invalidatePluginInventory()
+	inventory, err := s.pluginInventory(ctx)
+	if err != nil {
+		return pluginInventoryEntry{}, fmt.Errorf("复核 OpenClaw 插件目录失败: %w", err)
+	}
+	existing, ok := findChannelPlugin(inventory, channel, pluginID)
+	if !ok {
+		return pluginInventoryEntry{}, fmt.Errorf("未在 OpenClaw 插件目录中找到通道 %s", channel)
+	}
+	if requireEnabled && !existing.Enabled && existing.Status != "loaded" {
+		return pluginInventoryEntry{}, fmt.Errorf("通道 %s 已安装但未启用，OpenClaw 返回状态为 %s", channel, existing.Status)
+	}
+	return existing, nil
+}
+
+func channelPluginResult(channel string, plugin pluginInventoryEntry, action, message string) map[string]any {
+	return map[string]any{
+		"updated": true, "verified": true, "channel": channel, "pluginId": plugin.ID,
+		"pluginName": plugin.Name, "version": plugin.Version, "origin": plugin.Origin,
+		"enabled": plugin.Enabled || plugin.Status == "loaded", "status": plugin.Status,
+		"action": action, "message": message,
+	}
 }
 
 func summarizeChannelStatus(status map[string]any, channel string) (configured, running bool, accountCount int, lastError string) {
@@ -102,13 +338,24 @@ func (s *Service) ChannelStatus(ctx context.Context, channel string) (map[string
 	out, err := s.run(ctx, nil, "channels", "status", "--channel", channel, "--json")
 	if err != nil {
 		configured, accountCount := s.configuredChannelState(channel)
+		queryState := "failed"
+		queryMessage := "OpenClaw 通道状态查询失败，请检查 OpenClaw 服务后重试。"
+		if errors.Is(err, context.DeadlineExceeded) {
+			queryState = "timeout"
+			queryMessage = "OpenClaw 通道状态查询超时，暂时无法确认通道真实状态，请稍后重试。"
+		} else if errors.Is(err, context.Canceled) {
+			queryState = "canceled"
+			queryMessage = "通道状态查询已取消，请稍后重试。"
+		}
 		return map[string]any{
-			"queryError": err.Error(),
+			"queryState":     queryState,
+			"queryMessage":   queryMessage,
+			"queryError":     err.Error(),
+			"queryErrorText": tail(err.Error(), 300),
 			"channels": map[string]any{
 				channel: map[string]any{
 					"configured": configured,
 					"running":    false,
-					"lastError":  tail(err.Error(), 300),
 				},
 			},
 			"channelAccounts": map[string]any{
