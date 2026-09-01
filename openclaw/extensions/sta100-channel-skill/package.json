@@ -1,0 +1,10 @@
+{
+  "name": "@sta100/channel-skill",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "STA-100 authorized channel Skill handoff",
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}

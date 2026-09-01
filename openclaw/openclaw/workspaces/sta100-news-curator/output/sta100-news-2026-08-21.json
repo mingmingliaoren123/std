@@ -1,0 +1,56 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "news",
+  "items": [
+    {
+      "category": "欧洲市场",
+      "title": "Bike Europe：欧洲自行车市场分化重置 德国与西班牙靠电助力稳住阵脚",
+      "summary": "Bike Europe 第 43 期显示，2026 年欧洲各国自行车市场表现不一，德国与西班牙因电助力车高端化出现企稳迹象，意大利持续承压，法国与瑞士仍处疫情后调整。",
+      "content": "Bike Europe 2026 年 6 月发布的在线杂志文章《Europe's bicycle market begins reset》汇总了主要国家 2025 年数据与 2026 年开局态势。报道指出，欧洲自行车市场呈现明显分化：德国与西班牙借助电助力车等高价值品类稳住营收，意大利销售持续下滑并给专业零售带来压力，英国录得 2020 年以来首次增长，呈现谨慎回暖；法国与瑞士仍受需求疲软和疫情后库存修正影响，复苏滞后；奥地利趋于稳定，比利时在租赁、电助力与稳定通勤需求带动下表现突出。报道强调，价值驱动品类尤其是电助力车，是德国与西班牙企稳的关键支撑。建议关注欧洲国家零售数据与高端电助力细分走势，作为后续渠道与定价决策参考。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52559/europes-bicycle-market-begins-reset",
+      "time": "2026-06-12",
+      "relevance": "高 - 来自指定来源 Bike Europe，覆盖德国、法国并间接关联其他关注国家"
+    },
+    {
+      "category": "行业资讯",
+      "title": "Eurobike 2026 在法兰克福闭幕 创新、社交与零售优先成为三大主线",
+      "summary": "Bike Europe 报道 Eurobike 2026 在法兰克福举办，Hepha Urban X 等新品首秀，主办方推出 Retail First 项目强化零售导向。",
+      "content": "Bike Europe 2026 年 6 月 23 日发布的官方回顾文章介绍，Eurobike 2026 在法兰克福展览中心举办，国际品牌、初创团队与决策者集中展示最新产品与技术。Hall 12 的 Eurobike Stage 与 Hall 8 的 Global Sourcing Stage 上多家厂商进行现场展示，Hepha Urban X 等新品被称为城市电助力出行的新范式。本届专业议程涵盖出行、数字化、可持续发展、运动与骑行文化等议题。Eurobike 2026 同期推出 Retail First 项目，为专业零售商提供专属参观福利与社交机会，进一步突出 B2B 零售渠道主线。报道强调 Eurobike Awards、Happy Hours 等社交环节与 Cycle Cafe 等核心节点巩固了展会的产业连接价值。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52653/innovation-networking-and-community-at-eurobike-2026",
+      "time": "2026-06-23",
+      "relevance": "高 - 直接来自指定来源 Bike Europe 关于 Eurobike 2026 的官方回顾"
+    },
+    {
+      "category": "智能骑行",
+      "title": "Canyon 在 Eurobike 2026 发布 Predict AI 与 V2X 车联网系统",
+      "summary": "德国品牌 Canyon 在 Eurobike 2026 推出 Predictive AI 骑行安全系统与集成 V2X 的 Roadlite:ON CF，并展示 Stingr 智能头盔 HUD 概念。",
+      "content": "Canyon 官方博客披露，Eurobike 2026 期间首次发布四项智能骑行创新：搭载 Cognitive Core 计算核心、融合摄像头、雷达与 Edge AI 的 Canyon Predict 系统，可实时预测路况威胁并向骑手预警；Stingr 智能头盔集成可伸缩 HUD 透明 OLED 显示屏与语音控制，配合 Canyon Predict 显示安全与骑行数据；Roadlite:ON CF 城市电助力车集成 V2X 车联网通信，与大众等品牌车辆实时交换位置与盲区信息，被官方称为首款接近量产的 V2X 量产车。Canyon 同时展示了新一代 XC 概念车型以提升空气动力表现。报道指出该系统在原型阶段仍偏保守，但代表欧洲 OEM 把汽车级主动安全下沉到自行车的重要尝试，建议结合德国《StVZO》合规要求进一步评估其在德国市场的监管匹配度。",
+      "source": "Canyon / Eurobike 2026",
+      "sourceUrl": "https://app.canyon.com/en-us/blog-content/pr/eurobike-innovation/b10062026.html",
+      "time": "2026-06-10",
+      "relevance": "中 - 来源为 Canyon 官方关于 Eurobike 2026 发布，Canyon 总部位于德国科布伦茨，关联德国关注国家与智能骑行主题"
+    },
+    {
+      "category": "产品",
+      "title": "DJI 旗下 Avinox 在 Eurobike 2026 推出 MG Concept 电机+变速一体化概念",
+      "summary": "DJI 旗下 Avinox 在法兰克福 Eurobike 2026 发布 MG Concept 概念电机，把行星齿轮双电机与 AI 换挡算法集成到中置电机，目标量产 2027 年。",
+      "content": "Eurobike 2026 期间，Avinox（大疆旗下电助力驱动品牌）展出与 Canyon、Commencal、Forbidden、Megamo、Mondraker 合作的 MG Concept 概念车架。该方案把内置行星齿轮双电机与电子控制无级变速（E-CVT）整合到中置电机，可实现 520% 齿比、300 Nm 扭矩下 0.1 秒内换挡，并支持静止换挡、踏频识别与 AI 辅助自动选档。系统集成电控防盗锁、150 kg 载重、再生制动与单向皮带/链条兼容，目标降低传动维护负担。Avinox 与 TRP 联合开发的 SmoothShift 电子传动同期亮相，可减少换挡机械冲击。德国《BIKE》杂志引用 Avinox 称 MG Concept 量产计划定于 2027 年。建议关注与 EN 15194 标准的合规衔接以及德国整车厂的整合进度。",
+      "source": "Eurobike 2026 / Bike News Online",
+      "sourceUrl": "https://www.bikenews.online/index.php?route=bossblog/article&path=8&blog_article_id=843",
+      "time": "2026-06-26",
+      "relevance": "中 - 内容在 Eurobike 2026 现场发布并由多家指定行业媒体覆盖；产品面向欧洲 OEM，与德国市场紧密相关"
+    },
+    {
+      "category": "法规",
+      "title": "欧盟通过 Regulation (EU) 2026/1030 建立统一的交通服务温室气体核算方法",
+      "summary": "欧洲议会与理事会 2026 年 4 月 29 日通过 Regulation (EU) 2026/1030，建立门到门交通排放统一核算方法，2026 年 6 月 1 日生效。",
+      "content": "EUR-Lex 公报的 Regulation (EU) 2026/1030 由欧洲议会与理事会于 2026 年 4 月 29 日通过，对接 EN ISO 14083:2023 国际标准，建立欧盟统一的货运与客运服务温室气体核算方法。新框架以端到端方式量化运营、能源载具、车辆制造与报废及基础设施建设的排放，要求欧盟企业在自愿披露时使用一致且可核验的方法，避免不同方法与输入数据造成误导，并支持公共采购、低碳物流与可持续消费决策。配套的实施与授权法令将进一步完善技术细节，欧盟委员会将向中小企业提供指导与数字工具，框架的全面适用预期在 2030 年底前完成。电助力货运与共享出行运营商可通过该框架展示零排放效益，建议复核供应链与物流端的排放数据收集流程。",
+      "source": "EUR-Lex / European Commission Mobility & Transport",
+      "sourceUrl": "https://transport.ec.europa.eu/news-events/news/new-eu-rules-harmonising-transport-emissions-calculations-take-effect-2026-06-01_en",
+      "time": "2026-04-29",
+      "relevance": "中 - 来自指定来源 EUR-Lex / 欧盟交通总署，覆盖欧盟法规主题；与电助力货运与碳足迹披露直接相关，对德国、法国、波兰、瑞典等成员国均有效"
+    }
+  ]
+}

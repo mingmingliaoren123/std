@@ -1,0 +1,56 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "news",
+  "items": [
+    {
+      "category": "欧洲市场",
+      "title": "中国主导欧盟电助力自行车进口 上半年同比增36%",
+      "summary": "Bike Europe援引Eurostat数据,2026年上半年欧盟进口电助力自行车42.2万辆同比增长36%,中国份额升至41%取代台湾。",
+      "content": "Bike Europe于2026年8月20日发布Eurostat季度数据更新,显示2026年上半年欧盟进口电助力自行车共422,000辆,较2025年同期增长36%;其中中国供应商全年累计份额攀升至41%,越南、柬埔寨等亚洲替代来源也录得两位数同比增长;台湾份额则从长期主导位置继续下滑,Q2对欧盟出口同比下降5%。Bike Europe指出,这一结构性切换由欧盟消费者对中低价位电助力自行车的需求驱动,波兰等新兴市场尤为关键。对OEM、品牌及经销商而言,意味着中国低价位电助力自行车在欧洲入门段的压力上升,而高端段仍由台湾与欧洲品牌主导;建议复核采购结构、库存周转以及售后零件供应策略。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/53013/china-leads-as-eu-e-bike-imports-rise-36-in-h1",
+      "time": "2026-08-20",
+      "relevance": "高(官方Eurostat数据,影响欧盟全境电助力自行车供应链与价格段格局)"
+    },
+    {
+      "category": "欧洲市场",
+      "title": "中国一季度占欧盟电助力自行车进口47% 波兰需求是关键",
+      "summary": "Bike Europe基于Eurostat数据,2026年Q1中国占欧盟电助力自行车进口47%,较上年Q1 31%大幅提升,波兰等新兴市场驱动。",
+      "content": "Bike Europe在2026年6月18日报道中引述Eurostat最新季度统计:2026年第一季度欧盟共进口电助力自行车186,000辆,同比上升42%,其中中国供应商份额跃升至47%,远高于2025年Q1的31%与2024年Q1的17%;台湾份额同期跌至23%,2020年时其份额曾达53%。从单价看,Q1自中国进口电助力自行车均价仅329欧元,而台湾进口均价高达1,709欧元,印证中国聚焦入门低价段、台湾聚焦高端段。整体进口额仅同比增6%至1.44亿欧元,显示量增价跌。Bike Europe强调,这一变化主要由波兰等新兴市场对可负担电助力自行车的需求拉动。对关注欧洲渠道与价格策略的企业,建议复核波兰、德国等市场入门段竞争与库存结构。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52615/china-nears-50-share-of-eu-e-bike-imports-in-q1",
+      "time": "2026-06-18",
+      "relevance": "高(直接涉及波兰等关注国家,且为官方Eurostat季度统计)"
+    },
+    {
+      "category": "渠道",
+      "title": "德国业界筹划柏林新产业大会 转向自办替代Eurobike",
+      "summary": "德国ZIV、Zukunft Fahrrad与VSF将于2026年11月5日在柏林WECC联合举办Towards Tomorrow自行车产业大会。",
+      "content": "Bike Europe于2026年5月28日报道,德国自行车行业协会ZIV、Zukunft Fahrrad与Verbund Service und Fahrrad(VSF)将于2026年11月5日在柏林WECC会议中心联合举办全新行业大会Towards Tomorrow - Cycling Industry Convention 2026。该活动标志德国业界在相继退出Eurobike之后,正式以本土三协会联合形式重建全行业聚会,聚焦德国市场战略、零售与售后议题。对经销商、品牌方与配件供应商而言,这是面向德国独立自行车零售渠道的新议程入口,建议关注会议招商、议程与品牌展示机会,并评估Eurobike之外的成本与替代路径。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52413/german-industry-looking-to-the-future-with-new-berlin-convention",
+      "time": "2026-05-28",
+      "relevance": "高(德国本土行业大会启动,影响德国渠道、品牌与零售议程)"
+    },
+    {
+      "category": "行业资讯",
+      "title": "欧洲自行车工业联合会ECI退出Eurobike 转办布鲁塞尔自营活动",
+      "summary": "欧洲自行车工业联合会ECI确认2026年Eurobike期间不举办早餐会或参与论坛,将聚焦自有布鲁塞尔活动。",
+      "content": "Bike Europe于2026年6月5日报道,欧洲自行车工业联合会(European Cycling Industries, ECI)确认将不再在2026年Eurobike期间组织例行的行业领袖早餐会,也不参与任何论坛讨论;ECI CEO Paul Walsh向Bike Europe证实,ECI将把精力投入其自有、面向布鲁塞尔政策圈的产业活动,以提升欧盟层面游说与法规参与度。ECI的缺席叠加多家德国与荷兰品牌的撤展,使Eurobike 2026展商与观众结构明显弱化。对关注欧盟法规、品牌出口与展会资源分配的企业,建议复核Eurobike 2027参与必要性,并跟踪ECI布鲁塞尔活动的议程与出席企业。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52478/european-cycling-industries-skips-eurobike-to-focus-on-own-brussels-event",
+      "time": "2026-06-05",
+      "relevance": "中(欧盟行业组织转向自有平台,影响展会参与与法规沟通渠道)"
+    },
+    {
+      "category": "行业资讯",
+      "title": "台湾电助力自行车出口上半年大跌14% 美国市场崩盘",
+      "summary": "Bike Europe引述数据,2026年上半年台湾电助力自行车出口量约15万辆同比降14%,为2017年以来最低上半年。",
+      "content": "Bike Europe于2026年7月21日报道,2026年上半年台湾电助力自行车出口量仅略高于150,000辆,较2025年同期下滑14%,为2017年以来最低上半年;出口总值亦首次跌破100亿新台币(约2.94亿欧元),触及2017年以来的低位。美国市场是台湾出口萎缩的最主要拖累,欧盟虽是相对稳定去向,但份额仍被中国与东南亚国家挤压。这一结构性变化意味着,面向欧洲市场的欧洲品牌在长期OEM/ODM伙伴选择上面临产能与价格双重压力,建议复核供应链多元化和关键零配件来源,以降低对单一台湾供应商的依赖。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52823/no-turnaround-for-taiwans-e-bike-exports-as-us-market-crumbles",
+      "time": "2026-07-21",
+      "relevance": "中(影响欧盟市场高端电助力自行车的供应来源与OEM格局)"
+    }
+  ]
+}

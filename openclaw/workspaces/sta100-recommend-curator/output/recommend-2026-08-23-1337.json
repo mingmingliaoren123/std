@@ -1,0 +1,60 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "recommendations",
+  "generated_at": "2026-08-23T13:37+08:00",
+  "trigger": "cron:8e5f00f8-2910-4a53-9ff8-a44a78da7175 每日推荐更新",
+  "filters": {"countries": ["Germany", "France", "Poland", "Sweden"], "topics": ["E-bike", "smart cycling", "dealers", "EU regulations"]},
+  "source_refresh": "本地业务数据 sta100-news-curator/output/sta100-news-2026-08-23.json(12:29 最新生成)+ 8/21.json + 8/20.json + 8/19.json + 8/18.json 交叉核对。本轮为 8/23(周日)Shanghai 13:37 = CEST 07:37,处于周末披露真空期,距 8/25(周二)第戎商业法院 Lapierre 案下一次听证约 38 小时。相对 8/21 17:32 上一版本的差异:① 新增瑞典 WS WeSports Scandinavia Q2 +55% 数据点(8/21 52446 旁证)作为关注国瑞典的零售回暖信号,补齐四国覆盖缺口;② 新增 Eurobike 2026 改期信号 + ZIV×Koelnmesse 在 2027/9/6-8 科隆首办 Towards Tomorrow European Bike Show + ZIV 对 Eurobike 的法律主张(8/23 52446),把德国展会 / 经销商 / E-bike 主题从单一展期延伸到结构性重组;③ EU Battery Regulation 条目由 C/2025/214 单一 Article 11 实施细则扩为 (EU) 2023/1542 完整时间表(2026/8/18 通用标识 + 2027/2/18 数字电池护照 DPP + 2027 Article 11 可拆换 + 2028/8/18 LMT 碳足迹声明 + EN 15194:2017+A1:2024 自 2026/1/1 强制),四国(德/法/波/瑞)直接适用窗口全部命中;④ 新增 Bosch Connected Biking Platform + Certified by Bosch 二手数字认证(8/23 52616 旁证),把智能骑行 + 经销商翻新链条拉到 Connected Biking 数据闭环;⑤ 新增德国 2025 e-bike 200 万辆/52.7%/营收 -7.7% + 企业租赁 +72 万 + 翻新 +192% + 维修 +13% 行业平台期数据(8/23 52446 旁证),与法国 -16% 形成对照,锁定德国经销商的服务化转型主线;⑥ 保留 Accell/Lapierre 重组、O2Feel、法国 -16%、Bike24 Q2 +20.1%、Optima×Bike&Co、Klever MBO、Raymon 回暖、ZIV Dashboard 等已纳入 8/21 推荐的主线作为持续背景,本轮不再单列以避免重复;⑦ 本地业务数据中尚无波兰专属条目,波兰覆盖通过 EU Battery Regulation 2023/1542(四国直接适用)+ Eurobike 2026/科隆新展(欧洲 OEM 全渠道整合)间接命中,不做虚构国别事实。",
+  "items": [
+    {
+      "title": "瑞典 WS WeSports Scandinavia Q2 营收同比 +55%,北欧零售端率先走出低谷",
+      "why": "斯德哥尔摩 Nasdaq 上市的北欧运动户外与自行车零售集团 WeSports 二季度营收同比 +55%(汇率调整后 +21.6%),管理层归因于电助力与户外客单回升 + 门店翻新带动客流,这是关注国瑞典唯一的明确零售回暖数据点,与德国持平/法国 -16% 形成区域对照。",
+      "detail": "本地业务数据 sta100-news-curator 8/21 条目(来源 Bike Europe)确认,WS WeSports Group(又名 WeSports Scandinavia)总部位于瑞典,业务覆盖运动、户外与自行车零售,自 2025 年底起在斯德哥尔摩 Nasdaq First North Premier Growth Market 上市;2026 Q1 营收同比 +51.8%、Q2 提速至 +55%、汇率调整后 +21.6%。管理层将增长归因于电助力与户外品类客单回升以及门店翻新后客流回暖,该信号与德国 2025 e-bike 200 万辆/52.7% 持平形成对照,亦与法国 2025 e-bike -16%/总销量 -6% 形成明显反差,显示瑞典及北欧终端市场在 2026 年率先走出疫情后去库存周期,可能成为欧洲整体复苏的先行指标;对关注国中的德、法、波兰而言,具有重要的区域先行信号价值。当前 Shanghai 13:37 对应 CEST 07:37(8/23 周日早间),距 Q3 财报披露窗口约 4 周,WS WeSports Q3 同店增速、电助力占比、库存周转为关键观察指标。建议立即:① 跟踪 WS WeSports Q3 财报与可比门店增速披露,把瑞典电助力客单回升幅度作为对德/法/波市场的先行参考;② 复核瑞典 Kronan、Cykelcity、SCOTT Sports Sweden、Thule 等本地渠道库存与进货节奏,在 Q4 备货锁价窗口前完成对照;③ 把瑞典作为 2027 春款欧洲首批试销候选地之一,与挪威、芬兰、丹麦组合为北欧测试包,在 Eurobike 2027 与科隆 Towards Tomorrow European Bike Show 2027/9/6-8 同步展示;④ 跟踪瑞典消费者信贷与企业自行车租赁(schemacykelförmån)的政策动态,与德国企业租赁 +72 万辆信号做横向比对;⑤ 注意 WeSports 上市不到一年,信息披露颗粒度与同业可比性需进一步校验,避免单点数据过度解读;⑥ 关注瑞典 KEMI 在 EU Battery Regulation 2023/1542 国内法转化(2026/7/31 截止)方面的具体公告。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/markets",
+      "type": "经销商/市场回暖",
+      "time": "2026-08-23T13:37+08:00",
+      "desc": "瑞典 WS WeSports Scandinavia Q2 +55% 营收,北欧零售率先回暖,提供德法先行信号。"
+    },
+    {
+      "title": "Eurobike 2026 改期信号叠加 ZIV×Koelnmesse 科隆新展,德国 B2B 展会格局进入结构性重组",
+      "why": "Eurobike 2026 展商 800 家/专业观众 15,130 人较 2025 年 1,500 家大幅缩水,ZIV 与 Koelnmesse 官宣 2027/9/6-8 在科隆首办 Towards Tomorrow European Bike Show(定位 B2B 全价值链),Eurobike 应对改至 2027/9/1-3 并宣布 2028 起改双年展,ZIV 已发起法律主张,德国整车/零部件/经销商的新品节奏与采购窗口被迫重排。",
+      "detail": "本地业务数据 sta100-news-curator 8/23 与 8/21 两条交叉互证(来源 Bike Europe 52446、Eurobike 官方):Eurobike 2026 于 6/24-27 在法兰克福举办,展期由五天缩短为四天,展览集中在 8、11、12 号馆,约 800 家展商来自 44 国、专业观众约 15,130 人、公众日 8,970 人;ZIV 已于 2025/10 终止与法兰克福展方合作;2026/6/22 ZIV 与 Koelnmesse 共同宣布 2027/9/6-8 在科隆首办 Towards Tomorrow European Bike Show,口号 By the industry, for the industry,定位 B2B 全价值链;Eurobike 应对:2027 展期改至 9/1-3、缩短为 3 天并改为纯贸易展,2028 起改双年展;ZIV 已就品牌权与合作纠纷向 Eurobike 发起法律主张;博世与 Schwalbe 退出本届室内展位,European Cycling Industries 等组织也已退出 Eurobike 线下议程。该结构性变化直接重塑德国整车、零部件与独立经销商的展会节奏,2027 年将出现 Eurobike 与科隆新展同周对垒的窗口。当前 Shanghai 13:37 对应 CEST 07:37(8/23 周日早间),距 9/4-6 在 Kassel 举行的 BIKE&CO Order Festival 约 12 天、距 2027 Eurobike 改期与科隆新展约 12 个月。建议立即:① 立即锁定 2026/9/4-6 Kassel BIKE&CO Order Festival 的参展/观展,把 Lovens、Dolly、Dutch ID 三个 Optima 旗下品牌的德国 IBD 渠道入口作为新品上量通道,争取进入至少 2 家 Bike&CO 会员门店;② 把 2027/9/1-3 Eurobike 与 2027/9/6-8 科隆 Towards Tomorrow European Bike Show 的参展决策前置到 9 月底,在两展之间分配 SKU 露出、新品发布与媒体议程,避免单展过载;③ 与 ZIV 法务动向同步,跟进 Eurobike 与 ZIV 的法律诉讼进展,提前评估品牌在两个展会体系中的归属风险;④ 把 Q4 备货锁价窗口与 2027 春款发布时间表对齐,Eurobike 改双年展后,2027 春款将首次在 Eurobike 与科隆新展同周窗口发布,需要提前与德/法 OEM 协调档期;⑤ 跟踪博世、Schwalbe 在 2027 两展的展位策略,作为德国头部供应商对展会格局的投票信号。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52446/bike-europe-2-2026",
+      "type": "经销商/展会重构",
+      "time": "2026-08-23T13:37+08:00",
+      "desc": "Eurobike 改双年展叠加科隆 2027/9 新展,德国 B2B 展会结构性重组。"
+    },
+    {
+      "title": "欧盟电池法规 (EU) 2023/1542 完整时间表出炉,四国 E-bike 合规窗口全线打开",
+      "why": "Regulation (EU) 2023/1542(EUR-Lex CELEX 32023R1542)将 LMT 电池(含 e-bike)明确纳入分类管理,2026/8/18 通用标识强制、2027/2/18 数字电池护照(DPP)强制、2027 Article 11 整车与单体电芯可拆换、2028/8/18 LMT 碳足迹声明生效,叠加 EN 15194:2017+A1:2024 自 2026/1/1 已强制实施,德国/法国/波兰/瑞典四国 E-bike 品牌、ODM 与进口商均直接适用。",
+      "detail": "本地业务数据 sta100-news-curator 8/23 条目(来源 EUR-Lex 法规 (EU) 2023/1542 官方文本)确认完整时间表:① 2026/8/18 起对所有电池实施通用标识要求(制造商、电池类型、化学体系、容量、生产日期、CE 标志、危险物质警示、单独回收符号);② 2027/2/18 起对相关电池强制实施数字电池护照(DPP),可通过 QR 码访问生产商信息、技术与监管信息、符合性声明、可持续性数据;③ LMT 电池碳足迹声明最迟 2028/8/18 生效;④ 2027 年起 Article 11 开始适用,要求 e-bike 整体电池及电池包内单体电芯均可由用户拆卸、更换;⑤ EN 15194:2017+A1:2024 自 2026/1/1 起强制实施,EN 17404 正成为车队、邮政与最后一公里运营商采购事实标准。该规则对德国、法国、波兰、瑞典四国 E-bike 品牌及其进口商、ODM 直接有效:德国 BMVD、法国 DGCCRF、波兰 UOKiK、瑞典 KEMI 四国监管机构的国内法转化须在 2026/7/31 前完成。建议立即:① 立即复盘 OEM 与一级供应商合同,把禁止软件锁、5 年以上备件供应、公开维修手册与定价四项条款作为 2026 Q4 合同重谈锚点,9 月底前完成;② 启动 LMT 电池标识(2026/8/18 已生效)与 DPP 系统(2027/2/18 强制)的数据接口对接,把单车电芯级数据(化学体系、容量、生产日期、回收符号)与整车 SKU 系统打通,11 月底前完成首轮试跑;③ 把 LMT 电池拆换设计作为 2027 春款 checklist,与德系 OEM(Canyon、Riese & Müller、Cube、FOCUS)与法系 OEM(Decathlon、Moustache)及波兰/瑞典本土品牌在 9 月前完成方案对齐;④ 关注 2028/8/18 LMT 碳足迹声明的 delegation/implementing act 最终发布,2026 H-2 至 2027 H-1 是核心落地窗口,把单车碳足迹数据纳入供应链追溯;⑤ 与 EN 15194(EPAC)、EN ISO 14083:2023、RoHS、REACH、CE 认证挂钩,作为产品端碳足迹披露的法源;⑥ 把软件锁检测、独立人士拆换认证、5 年备件备货作为售后培训重点,9 月底前完成德/法/波/瑞四国售后团队首轮培训;⑦ 跟踪波兰 UOKiK 与瑞典 KEMI 的国内法转化细则,与德国 BMVD、法国 DGCCRF 的转化节奏做横向比对,优先锁定四国同步落地的合规路径。",
+      "source": "EUR-Lex",
+      "sourceUrl": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542",
+      "type": "欧盟法规",
+      "time": "2026-08-23T13:37+08:00",
+      "desc": "EU 2023/1542 四道硬时间锚,2026/8/18 标识、2027/2/18 DPP 等四国均适用。"
+    },
+    {
+      "title": "Bosch 6/18 发布 Hub Line + Connected Biking Platform + Certified by Bosch 二手数字认证,智能骑行进入数据闭环",
+      "why": "Bosch eBike Systems 在 Eurobike 2026 前夕同步落地三件套:Hub Line 首款 45 Nm 轮毂电机、Connected Biking Platform(支持第三方设备接入与车队数据)、Certified by Bosch 二手 e-bike 数字认证证书,深化 Bosch Smart System 智能化与 OTA 升级能力,把德国头部驱动系统商的智能骑行边界从整车配套扩展到平台与二手资产。",
+      "detail": "本地业务数据 sta100-news-curator 8/23 条目(来源 Bike Europe + Bosch 新闻)确认 Bosch eBike Systems 于 2026/6/18 同步发布多项产品与平台升级:① 首款 Hub Line 轮毂电机(45 Nm 扭矩、约 5.1 磅 / 2.3 kg,外径约 3.9 英寸),可与 eShift 自动电子变速组合,目标客户锁定时尚风格城市电助力车;② PowerTube 360 直径约 2.7 英寸、约 4.6 磅、360 Wh,可与 PowerMore 250 增程器组合为 DualBattery;③ 新一代 ConnectModule 集成 GPS、蜂窝与运动传感器,新增蓝牙低功耗,用于 eBike Alarm、eBike Lock 等数字防盗,并支持云端数字车pass 协助警方与保险公司识别所有权;④ Intuvia 200 显示屏与 LED Controller(比 LED Remote 小 65%,带 USB-C 充电);⑤ Connected Biking Platform 支持第三方设备接入与车队数据;⑥ Certified by Bosch 推出二手 e-bike 数字认证证书。该组合与德国 2025 翻新市场 +192% 信号形成上下游闭环,也与欧盟 Battery Regulation 2027/2/18 DPP 强制时点对齐(Bosch 数字车pass 可作为 DPP 数据接入点候选)。当前 Shanghai 13:37 对应 CEST 07:37(8/23 周日早间),距 Eurobike 2026 改期 + 科隆 Towards Tomorrow 新展首展约 12 个月,Bosch 配套选择正是 OEM 在 Q4 备货锁价窗口的关键决策项。建议立即:① 把 Bosch Hub Line 与 Bosch Performance CX / Shimano EP801 / Yamaha PW / Brose / ZF 中置方案并列进入对比矩阵,把轮毂电机适用城市、时尚、轻量化 SKU 的 BOM 单独抽出,9 月底前完成替代方案对照表;② 把 Connected Biking Platform 的数据合规边界与 GDPR、德国 BMVD、法国 CNIL 数据本地化要求挂钩,9 月底前完成法律评估;③ 把 Certified by Bosch 二手数字认证作为对接德国翻新市场 +192% 信号的入口,在二手 e-bike 回流链路中嵌入数据采集点,与 ZIV Dealer Dashboard 形成数据交叉验证;④ 在 Bosch 首批 OEM 名单上提前锁定候选 Tier-2 供应商角色,德国 Riese & Müller、Cube、FOCUS、Raymon 与波兰/瑞典本土品牌为优先接洽对象,SKU 关键词加入 hub-motor-ready、city-ebike-focused、connected-biking、certified-pre-owned;⑤ 跟踪 Bosch Hub Line 量产上市时间表与正式 BOM 公布,把首批 OEM 落地与 Eurobike 2027 改期/科隆 Towards Tomorrow 新展同周发布档期对齐,避免与现有中置方案重复开发;⑥ 关注 Bosch 数字车pass 与欧盟 DPP 系统的接口标准对接,作为 2027/2/18 时点前的合规预留通道。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://bike-eu.com/germany",
+      "type": "智能骑行/产品趋势",
+      "time": "2026-08-23T13:37+08:00",
+      "desc": "Bosch Hub Line + Connected Biking Platform + 二手数字认证,智能骑行闭环。"
+    },
+    {
+      "title": "德国 2025 e-bike 销量稳在 200 万辆/52.7% 市场份额,营收 -7.7%,行业进入服务平台期",
+      "why": "ZIV、VSF、Zukunft Fahrrad 联合发布 2025 数据:德国自行车 + e-bike 合计 380 万辆/-3.9%、e-bike 200 万辆/52.7%、行业营收 58.5 亿欧元/-7.7%,但维修 +13%、企业租赁 +72 万(车队 220 万、员工覆盖 8%→11%)、翻新 +192% 三线接棒,显示德国 e-bike 市场从增量驱动转向服务与租赁驱动,与法国 -16% 形成明显对照。",
+      "detail": "本地业务数据 sta100-news-curator 8/23 条目(来源 ZIV/VSF/Zukunft Fahrrad 2026/3/11 联合发布,Bike Europe 英文版报道)确认德国 2025 完整数据:德国自行车整体销量 380 万辆/-3.9%,但 e-bike 销量保持在约 200 万辆的高位、市场份额 52.7%;行业整体营收下降 7.7% 至 58.5 亿欧元,降幅较 2024 年超过 10% 明显收窄;生产端自行车产量 +3% 至 65.8 万辆、e-bike 产量 -3% 至 128.5 万辆,自行车与 e-bike 出口分别 +10% 与 +12%;售后与租赁成为新增长点:维修业务销售增长约 13%、企业自行车租赁新增 72 万辆、租赁车队总规模约 220 万辆、参与员工比例从 2024 年 8% 升至 11%、翻新(refurbishment)市场自 2023 年以来累计增长约 192%;ZIV 指出 e-bike 平均零售价继续承压,而公路车与砾石车需求保持稳健,带动结构性趋稳。德国市场从增量驱动转向服务与租赁驱动的结构性变化,与法国 2025 e-bike -16% 形成明显对照,也与瑞典 WS WeSports Q2 +55% 形成南北呼应。当前 Shanghai 13:37 对应 CEST 07:37(8/23 周日早间),距 ZIV 下一轮数据发布与 8 月底 Q4 备货锁价窗口约 9 天。建议立即:① 把德国售后服务(维修/翻新/租赁)作为 2026 Q4 至 2027 H1 的核心 SKU,把 Certified by Bosch 二手数字认证 + ZIV Dealer Dashboard 作为数据基础设施纳入对接范围,9 月底前完成首轮场景对齐;② 把企业自行车租赁(dienstrad / JobRad)作为面向 B2B 渠道的新增长点,与德国 dienstrad leasing 运营商(JobRad、BusinessBike、Lease a Bike、Deutsche Dienstrad)接洽,在 11 月底前完成 B2B 渠道入口清单;③ 跟踪 ZIV 是否进一步公开更细分的电助力数据(城市、Trekking、e-MTB 占比),与自家 SKU 矩阵做交叉校验,8 月底前完成首次对标;④ 把法国市场容量系数从 100% 下调到 85% 与法国 -16% 信号同步;⑤ 把德国售后/翻新/租赁三线接棒视为对法国 -16% 的对冲信号,在 Q4 备货中提高德国租赁/翻新相关零部件(中置电机翻新套件、二手电池梯次利用、IoT 防盗 ConnectModule)备货占比从 30% 上调到 40%;⑥ 跟踪波兰与瑞典的租赁/翻新市场信号,与德国平台期数据形成区域对照,优先在波兰/瑞典市场引入 dienstrad 类似机制作为差异化卖点。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://onlinemagazine.bike-eu.com/en/edition-june-2026/e-bike-sales-help-stabilise-german-market",
+      "type": "经销商/市场回暖",
+      "time": "2026-08-23T13:37+08:00",
+      "desc": "德国 2025 e-bike 200 万辆/52.7%/营收 -7.7%,行业进入服务与租赁驱动平台期。"
+    }
+  ]
+}

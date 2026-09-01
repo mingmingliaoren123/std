@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -35,12 +36,36 @@ func defaultPreferences() UserPreferences {
 		NewsCountries:           "德国、法国、波兰、瑞典",
 		NewsTopics:              "E-bike、智能骑行、经销商、欧盟法规",
 		NewsSources:             "EUR-Lex\nBike Europe\nCycling Industry News\nEurobike",
+		NewsMediaCategories:     []string{},
+		NewsMediaIDs:            []string{},
+		NewsCustomSources:       "",
 		AgentAllowlists:         map[string][]string{},
 		AgentModelOverrides:     map[string]string{},
 	}
 }
 
 func (a *businessAPI) privateFilesRouter(w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) == 2 && parts[0] == "knowledge" && parts[1] == "status" {
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		writeJSON(w, http.StatusOK, a.knowledgeIndexStatus(r.Context()))
+		return
+	}
+	if len(parts) == 1 && parts[0] == "knowledge" {
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		count, err := a.syncKnowledgeSources(r.Context())
+		response := map[string]any{"indexedFiles": count, "knowledgeIndex": a.knowledgeIndexStatus(r.Context())}
+		if err != nil {
+			// A bad source file is represented in knowledgeIndex.pendingFiles;
+			// the rest of the directory has still been imported successfully.
+			response["syncWarning"] = err.Error()
+		}
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
 	if len(parts) == 0 || parts[0] == "" {
 		a.privateFilesCollection(w, r)
 		return
@@ -70,7 +95,34 @@ func (a *businessAPI) privateFilesRouter(w http.ResponseWriter, r *http.Request,
 			writeBusinessError(w, err)
 			return
 		}
-		writeTODO(w, "TODO_PRIVATE_FILE_PARSER", "文件摘要需要在客户原始数据格式和解析规则确认后生成", []string{"原始文件格式", "解析器", "摘要字段", "索引策略"})
+		root, rootErr := knowledgePrivateFileRoot()
+		path, pathErr := privateFileStoragePath(item)
+		if rootErr != nil || pathErr != nil {
+			writeBusinessError(w, errors.Join(rootErr, pathErr))
+			return
+		}
+		relative, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			writeBusinessError(w, relErr)
+			return
+		}
+		var document knowledgeDocument
+		queryErr := a.store.db.QueryRowContext(r.Context(), `SELECT id,visibility,source_path,name,category,language,sha256,bytes,source_updated_at,indexed_at,status,error_text FROM knowledge_documents WHERE visibility='private' AND source_path=?`, filepath.ToSlash(relative)).Scan(
+			&document.ID, &document.Visibility, &document.SourcePath, &document.Name, &document.Category, &document.Language, &document.SHA256, &document.Bytes, &document.SourceUpdatedAt, &document.IndexedAt, &document.Status, &document.ErrorText)
+		if errors.Is(queryErr, sql.ErrNoRows) {
+			writeJSON(w, http.StatusOK, map[string]any{"file": item, "status": "待建立索引", "message": "文件已保存，等待知识库同步"})
+			return
+		}
+		if queryErr != nil {
+			writeBusinessError(w, queryErr)
+			return
+		}
+		var chunks int
+		_ = a.store.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM knowledge_chunks WHERE document_id=?`, document.ID).Scan(&chunks)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"file": item, "status": document.Status, "message": knowledgeDocumentStatusMessage(document.Status, document.ErrorText),
+			"document": map[string]any{"id": document.ID, "name": document.Name, "category": document.Category, "language": document.Language, "chunks": chunks, "sourceUpdatedAt": document.SourceUpdatedAt, "indexedAt": document.IndexedAt, "error": document.ErrorText},
+		})
 		return
 	}
 	a.privateFileItem(w, r, parts[0])
@@ -116,9 +168,8 @@ func (a *businessAPI) privateFileUpload(w http.ResponseWriter, r *http.Request) 
 	}
 	defer file.Close()
 	extension := strings.ToLower(filepath.Ext(header.Filename))
-	allowed := map[string]bool{".pdf": true, ".docx": true, ".xlsx": true, ".csv": true, ".txt": true, ".md": true, ".jpg": true, ".jpeg": true, ".png": true}
-	if !allowed[extension] {
-		writeAPIError(w, http.StatusUnsupportedMediaType, "FILE_TYPE_UNSUPPORTED", "文件格式暂不支持")
+	if err := knowledgeUploadValidation(header.Filename, header.Size); err != nil {
+		writeAPIError(w, http.StatusUnsupportedMediaType, "FILE_TYPE_UNSUPPORTED", err.Error())
 		return
 	}
 	root, err := privateDataRoot()
@@ -170,8 +221,18 @@ func (a *businessAPI) privateFileUpload(w http.ResponseWriter, r *http.Request) 
 		writeBusinessError(w, err)
 		return
 	}
+	_, _ = a.syncAgentKnowledgeFromLocalSources(r.Context())
+	indexErr := a.indexPrivateKnowledgeFile(r.Context(), item)
+	item.Status = a.privateKnowledgeStatus(r.Context(), item, indexErr)
+	_ = a.store.put(r.Context(), "private_files", id, item)
 	a.store.audit(r.Context(), "upload", "private_file", id, requestOperator(r), map[string]any{"sha256": digest, "bytes": written})
-	writeJSON(w, http.StatusCreated, map[string]any{"item": item, "todo": "等待客户提供原始数据格式后接入解析、分类和索引"})
+	response := map[string]any{"item": item, "knowledgeIndex": a.knowledgeIndexStatus(r.Context())}
+	if indexErr != nil {
+		response["message"] = "文件已保存，但尚未完成文本解析：" + indexErr.Error()
+	} else {
+		response["message"] = "文件已保存、解析并加入本机知识库"
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (a *businessAPI) privateFileItem(w http.ResponseWriter, r *http.Request, id string) {
@@ -210,6 +271,12 @@ func (a *businessAPI) privateFileItem(w http.ResponseWriter, r *http.Request, id
 			writeBusinessError(w, err)
 			return
 		}
+		_, _ = a.syncAgentKnowledgeFromLocalSources(r.Context())
+		if request.Category != item.Category {
+			indexErr := a.indexPrivateKnowledgeFile(r.Context(), request)
+			request.Status = a.privateKnowledgeStatus(r.Context(), request, indexErr)
+			_ = a.store.put(r.Context(), "private_files", id, request)
+		}
 		a.store.audit(r.Context(), "update", "private_file", id, requestOperator(r), nil)
 		writeJSON(w, http.StatusOK, request)
 	case http.MethodDelete:
@@ -219,15 +286,34 @@ func (a *businessAPI) privateFileItem(w http.ResponseWriter, r *http.Request, id
 		if path, err := privateFileStoragePath(item); err == nil {
 			_ = os.Remove(path)
 		}
+		if err := a.removePrivateKnowledgeDocument(r.Context(), item); err != nil {
+			writeBusinessError(w, err)
+			return
+		}
 		if err := a.store.softDelete(r.Context(), "private_files", id); err != nil {
 			writeBusinessError(w, err)
 			return
 		}
+		_, _ = a.syncAgentKnowledgeFromLocalSources(r.Context())
 		a.store.audit(r.Context(), "delete", "private_file", id, requestOperator(r), nil)
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
 	default:
 		w.Header().Set("Allow", "GET, PATCH, DELETE")
 		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "请求方法不受支持")
+	}
+}
+
+func knowledgeDocumentStatusMessage(status, reason string) string {
+	switch status {
+	case "indexed":
+		return "文件已解析并加入本机 Agent 知识库"
+	case "needs_processing":
+		if reason != "" {
+			return "文件已保存，但当前无法建立可检索索引：" + reason
+		}
+		return "文件已保存，但尚未建立可检索索引"
+	default:
+		return "文件已保存，正在建立本机知识库索引"
 	}
 }
 
@@ -240,13 +326,23 @@ func (a *businessAPI) privateFileReindex(w http.ResponseWriter, r *http.Request,
 		writeBusinessError(w, err)
 		return
 	}
-	item.Status, item.Updated = "WaitingDataFormat", currentText()
+	item.Status, item.Updated = "Reindexing", currentText()
 	if err := a.store.put(r.Context(), "private_files", id, item); err != nil {
 		writeBusinessError(w, err)
 		return
 	}
+	_, _ = a.syncAgentKnowledgeFromLocalSources(r.Context())
+	indexErr := a.indexPrivateKnowledgeFile(r.Context(), item)
+	item.Status = a.privateKnowledgeStatus(r.Context(), item, indexErr)
+	_ = a.store.put(r.Context(), "private_files", id, item)
 	a.store.audit(r.Context(), "reindex_requested", "private_file", id, requestOperator(r), nil)
-	writeJSON(w, http.StatusAccepted, map[string]any{"item": item, "todo": "原始数据格式和索引策略待提供"})
+	response := map[string]any{"item": item, "knowledgeIndex": a.knowledgeIndexStatus(r.Context())}
+	if indexErr != nil {
+		response["message"] = "文件已保存，文本解析待处理：" + indexErr.Error()
+	} else {
+		response["message"] = "文件已重新解析并更新本机知识库"
+	}
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 func (a *businessAPI) privateFileDownload(w http.ResponseWriter, r *http.Request, id string) {
@@ -432,12 +528,12 @@ func (a *businessAPI) newsRouter(w http.ResponseWriter, r *http.Request, parts [
 		// context and returning BUSINESS_STORE_FAILED after a successful sync.
 		readCtx, readCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer readCancel()
-		items, err := listRecords[NewsItem](readCtx, a.store, "news")
+		items, err := a.ensureNewsAvailable(readCtx)
 		if err != nil {
 			writeBusinessError(w, err)
 			return
 		}
-		result["news"] = filterDisplayableNews(items)
+		result["news"] = items
 		result["automation"] = a.overviewAutomationData(readCtx)
 		writeJSON(w, http.StatusOK, result)
 		return
@@ -457,12 +553,11 @@ func (a *businessAPI) newsRouter(w http.ResponseWriter, r *http.Request, parts [
 	if !allowMethod(w, r, http.MethodGet) {
 		return
 	}
-	items, err := listRecords[NewsItem](r.Context(), a.store, "news")
+	items, err := a.ensureNewsAvailable(r.Context())
 	if err != nil {
 		writeBusinessError(w, err)
 		return
 	}
-	items = filterDisplayableNews(items)
 	category := r.URL.Query().Get("category")
 	filtered := make([]NewsItem, 0, len(items))
 	for _, item := range items {
@@ -490,6 +585,12 @@ func (a *businessAPI) overviewRouter(w http.ResponseWriter, r *http.Request, par
 		a.overviewRecommendationsRefresh(w, r)
 	case "subscription":
 		a.overviewSubscription(w, r)
+	case "oem-categories":
+		if !allowMethod(w, r, http.MethodGet) {
+			return
+		}
+		categories := a.oemKnowledgeCategories(r.Context())
+		writeJSON(w, http.StatusOK, map[string]any{"categories": categories, "source": "indexed_agent_knowledge"})
 	case "oem/match", "oem-matches", "oem-matches/export":
 		if !allowMutation(w, r, http.MethodPost) {
 			return
@@ -498,10 +599,7 @@ func (a *businessAPI) overviewRouter(w http.ResponseWriter, r *http.Request, par
 	case "customers/search":
 		a.overviewCustomerSearch(w, r)
 	case "customer-discovery":
-		if !allowMutation(w, r, http.MethodPost) {
-			return
-		}
-		writeTODO(w, "TODO_DISCOVERY_DATA", "本地客户发现链路已保留，需客户提供本地数据格式和允许的公开来源", []string{"本地客户数据", "公开来源白名单", "字段映射", "结果保存规则"})
+		a.overviewCustomerDiscovery(w, r)
 	default:
 		if len(parts) == 2 && parts[0] == "oem-matches" {
 			if !allowMethod(w, r, http.MethodGet) {
@@ -531,10 +629,9 @@ func (a *businessAPI) overviewFull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	news, _ := listRecords[NewsItem](ctx, a.store, "news")
-	recommendations, _ := listRecords[Recommendation](ctx, a.store, "recommendations")
-	news = filterDisplayableNews(news)
-	recommendations = filterDisplayableRecommendations(recommendations)
+	a.refreshOverviewJobRuntime(ctx)
+	news, _ := a.ensureNewsAvailable(ctx)
+	recommendations, _ := a.ensureRecommendationsAvailable(ctx)
 	preferences := defaultPreferences()
 	_ = a.store.getSetting(ctx, "preferences", &preferences)
 	visibleNews := news
@@ -606,11 +703,15 @@ func (a *businessAPI) preferencesRouter(w http.ResponseWriter, r *http.Request, 
 	}
 	response := preferencesSaveResponse(preferences, "推荐开关已保存，OpenClaw 定时任务将在后台同步。", nil)
 	response["automation"] = a.overviewAutomationData(r.Context())
-	go func(preferences UserPreferences) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		_, _ = a.syncPreferenceAutomation(ctx, preferences)
-	}(preferences)
+	syncCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	_, syncErr := a.syncPreferenceAutomation(syncCtx, preferences)
+	cancel()
+	if syncErr != nil {
+		response["automationSynced"] = false
+		response["automationMessage"] = "设置已保存，但 OpenClaw 调度状态暂未复核：" + userJobSyncError(syncErr)
+	} else {
+		response["automation"] = a.overviewAutomationData(r.Context())
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -624,8 +725,7 @@ func (a *businessAPI) overviewSummary(w http.ResponseWriter, r *http.Request) {
 func (a *businessAPI) overviewSummaryData(ctx context.Context) map[string]any {
 	orders, _ := listRecords[Order](ctx, a.store, "orders")
 	documents, _ := listRecords[Document](ctx, a.store, "documents")
-	news, _ := listRecords[NewsItem](ctx, a.store, "news")
-	news = filterDisplayableNews(news)
+	news, _ := a.ensureNewsAvailable(ctx)
 	messages, _ := listRecords[AgentMessageRecord](ctx, a.store, "agent_messages")
 	activeOrders, reviewDocuments := 0, 0
 	for _, item := range orders {
@@ -643,10 +743,8 @@ func (a *businessAPI) overviewSummaryData(ctx context.Context) map[string]any {
 
 func (a *businessAPI) overviewAutomationData(ctx context.Context) map[string]any {
 	jobs, _ := listRecords[Job](ctx, a.store, "jobs")
-	recommendations, _ := listRecords[Recommendation](ctx, a.store, "recommendations")
-	news, _ := listRecords[NewsItem](ctx, a.store, "news")
-	recommendations = filterDisplayableRecommendations(recommendations)
-	news = filterDisplayableNews(news)
+	recommendations, _ := a.ensureRecommendationsAvailable(ctx)
+	news, _ := a.ensureNewsAvailable(ctx)
 	files, _ := listRecords[PrivateFile](ctx, a.store, "private_files")
 	jobByID := map[string]Job{}
 	for _, job := range jobs {
@@ -712,11 +810,15 @@ func automationItem(key, label string, job Job, dataCount int) map[string]any {
 		message = normalizeBusinessFailureMessage(message)
 	}
 	if strings.TrimSpace(job.SyncStatus) == "unavailable" || strings.TrimSpace(job.SyncStatus) == "error" || strings.TrimSpace(job.SyncStatus) == "missing" {
-		status = "failed"
 		if strings.TrimSpace(job.SyncMessage) != "" {
 			message = job.SyncMessage
 		}
-		message = normalizeBusinessFailureMessage(message)
+		if status == "" || status == "waiting" {
+			status = "needs_review"
+		}
+		if status == "failed" {
+			message = normalizeBusinessFailureMessage(message)
+		}
 	}
 	return map[string]any{
 		"key":               key,
@@ -806,12 +908,11 @@ func (a *businessAPI) overviewRecommendations(w http.ResponseWriter, r *http.Req
 	if !allowMethod(w, r, http.MethodGet) {
 		return
 	}
-	items, err := listRecords[Recommendation](r.Context(), a.store, "recommendations")
+	items, err := a.ensureRecommendationsAvailable(r.Context())
 	if err != nil {
 		writeBusinessError(w, err)
 		return
 	}
-	items = filterDisplayableRecommendations(items)
 	listResponse(w, items)
 }
 
@@ -826,12 +927,12 @@ func (a *businessAPI) overviewRecommendationsRefresh(w http.ResponseWriter, r *h
 		writeOpenClawError(w, err)
 		return
 	}
-	items, err := listRecords[Recommendation](ctx, a.store, "recommendations")
+	items, err := a.ensureRecommendationsAvailable(ctx)
 	if err != nil {
 		writeBusinessError(w, err)
 		return
 	}
-	result["recommendations"] = filterDisplayableRecommendations(items)
+	result["recommendations"] = items
 	result["automation"] = a.overviewAutomationData(ctx)
 	writeJSON(w, http.StatusOK, result)
 }
@@ -862,11 +963,15 @@ func (a *businessAPI) overviewSubscription(w http.ResponseWriter, r *http.Reques
 	a.store.audit(r.Context(), "update", "setting", "recommendation_enabled", requestOperator(r), request)
 	response := preferencesSaveResponse(preferences, "推荐开关已保存，OpenClaw 定时任务将在后台同步。", nil)
 	response["automation"] = a.overviewAutomationData(r.Context())
-	go func(preferences UserPreferences) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		_, _ = a.syncPreferenceAutomation(ctx, preferences)
-	}(preferences)
+	syncCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	_, syncErr := a.syncPreferenceAutomation(syncCtx, preferences)
+	cancel()
+	if syncErr != nil {
+		response["automationSynced"] = false
+		response["automationMessage"] = "设置已保存，但 OpenClaw 调度状态暂未复核：" + userJobSyncError(syncErr)
+	} else {
+		response["automation"] = a.overviewAutomationData(r.Context())
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -1445,11 +1550,15 @@ func (a *businessAPI) settingsRouter(w http.ResponseWriter, r *http.Request, par
 	a.store.audit(r.Context(), "update", "setting", "preferences", requestOperator(r), nil)
 	response := preferencesSaveResponse(request, "新闻与推荐设置已保存，OpenClaw 定时任务将在后台同步。", nil)
 	response["automation"] = a.overviewAutomationData(r.Context())
-	go func(preferences UserPreferences) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		_, _ = a.syncPreferenceAutomation(ctx, preferences)
-	}(request)
+	syncCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	_, syncErr := a.syncPreferenceAutomation(syncCtx, request)
+	cancel()
+	if syncErr != nil {
+		response["automationSynced"] = false
+		response["automationMessage"] = "设置已保存，但 OpenClaw 调度状态暂未复核：" + userJobSyncError(syncErr)
+	} else {
+		response["automation"] = a.overviewAutomationData(r.Context())
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -1601,6 +1710,25 @@ func (a *businessAPI) settingsModelRouter(w http.ResponseWriter, r *http.Request
 		response["message"] = modelRealProbeSuccessMessage
 		a.store.audit(r.Context(), "test", "setting", "model", requestOperator(r), map[string]any{"model": modelID, "ok": true, "durationMs": response["durationMs"]})
 		a.saveModelTestState(r.Context(), modelID, true, modelRealProbeSuccessMessage)
+		if modelID != "" {
+			// Keep a verified existing default. The first model that passes a
+			// real probe becomes the default; later successful probes must not
+			// unexpectedly replace it.
+			selectionDefault := strings.TrimSpace(request.DefaultModel)
+			if selectionDefault == "" {
+				selectionDefault = a.testedConfiguredDefaultModel(r.Context(), models)
+			}
+			if selectionDefault == "" {
+				selectionDefault = modelID
+			}
+			selectedModels := normalizedSelectedModels(selectionDefault, append(request.SelectedModels, modelID))
+			if err := a.openClaw.service.SetConfiguredModelSelection(selectionDefault, selectedModels); err != nil {
+				response["configurationWarning"] = modelTestFailureMessage(err, "模型已通过真实调用测试，但写入 OpenClaw 默认模型失败")
+			} else {
+				response["defaultModel"] = selectionDefault
+				response["selectedModels"] = selectedModels
+			}
+		}
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
@@ -1673,21 +1801,35 @@ func (a *businessAPI) settingsModelRouter(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	selectionDefault := firstNonEmpty(request.DefaultModel, request.Model)
+	models := a.openClaw.service.ModelSnapshot()
+	// Saving credentials/model metadata is deliberately independent of the
+	// real probe. An invalid or temporarily unavailable API Key must be
+	// editable and savable, but it must never silently replace a working
+	// default model.
+	selectionDefault := strings.TrimSpace(request.DefaultModel)
+	if selectionDefault == "" {
+		selectionDefault = a.testedConfiguredDefaultModel(r.Context(), models)
+	}
 	selectedModels := normalizedSelectedModels(selectionDefault, append(request.SelectedModels, request.Model))
-	if request.SelectedModels != nil || selectionDefault != "" {
+	if request.SelectedModels != nil || request.Model != "" || selectionDefault != "" {
 		if len(selectedModels) == 0 {
 			if err := a.openClaw.service.ClearConfiguredModelSelection(); err != nil {
 				writeOpenClawError(w, err)
 				return
 			}
 		} else {
-			if request.DefaultModel != "" {
-				selectionDefault = request.DefaultModel
-			} else {
-				selectionDefault = selectedModels[0]
+			if request.DefaultModel != "" && !a.modelPreviouslyTestedOK(r.Context(), selectionDefault) {
+				writeAPIError(w, http.StatusBadRequest, "DEFAULT_MODEL_NOT_TESTED", "默认模型必须先通过真实连通性测试，否则部分智能体和概览功能无法正常使用")
+				return
 			}
-			if err := a.openClaw.service.SetConfiguredModelSelection(selectionDefault, selectedModels); err != nil {
+			if selectionDefault == "" {
+				// Keep the model record while there is no successful test yet.
+				// OpenClaw has no usable default until a real probe succeeds.
+				if err := a.openClaw.service.SetConfiguredModels(selectedModels); err != nil {
+					writeOpenClawError(w, err)
+					return
+				}
+			} else if err := a.openClaw.service.SetConfiguredModelSelection(selectionDefault, selectedModels); err != nil {
 				writeOpenClawError(w, err)
 				return
 			}
@@ -1706,6 +1848,129 @@ func (a *businessAPI) settingsModelRouter(w http.ResponseWriter, r *http.Request
 		"providerBaseUrl": providerBaseURL,
 		"message":         "配置已保存。连通性和模型权限请点击“测试连通性”单独验证。",
 	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// testedConfiguredDefaultModel returns the current usable default, followed
+// by any previously verified configured model. It never treats a saved but
+// failed model as a default candidate.
+func (a *businessAPI) testedConfiguredDefaultModel(ctx context.Context, models orchestrator.Models) string {
+	for _, model := range []string{models.ResolvedDefault, models.DefaultModel} {
+		if model != "" && a.modelPreviouslyTestedOK(ctx, model) {
+			return model
+		}
+	}
+	for _, model := range models.ConfiguredModels {
+		if model.Key != "" && a.modelPreviouslyTestedOK(ctx, model.Key) {
+			return model.Key
+		}
+	}
+	return ""
+}
+
+func (a *businessAPI) overviewCustomerDiscovery(w http.ResponseWriter, r *http.Request) {
+	if !allowMutation(w, r, http.MethodPost) {
+		return
+	}
+	var request struct {
+		assistantQueryRequest
+		Country string `json:"country"`
+		City    string `json:"city"`
+		Type    string `json:"type"`
+		Limit   int    `json:"limit"`
+	}
+	if err := decodeJSONBody(w, r, &request); err != nil {
+		return
+	}
+	query := request.assistantQueryRequest
+	query.Page = firstNonEmpty(strings.TrimSpace(query.Page), "overview")
+	query.Feature = "customer-discovery"
+	query.Message = strings.TrimSpace(query.Message)
+	query.SessionKey = strings.TrimSpace(query.SessionKey)
+	if query.Context == nil {
+		query.Context = map[string]any{}
+	}
+	query.Context["targetAgent"] = "customer-measurement-agent"
+	query.Context["strictDiscovery"] = true
+	if strings.TrimSpace(request.Country) != "" {
+		query.Context["country"] = strings.TrimSpace(request.Country)
+	}
+	if strings.TrimSpace(request.City) != "" {
+		query.Context["city"] = strings.TrimSpace(request.City)
+	}
+	if strings.TrimSpace(request.Type) != "" {
+		query.Context["type"] = strings.TrimSpace(request.Type)
+	}
+	if request.Limit > 0 {
+		query.Context["limit"] = float64(request.Limit)
+	}
+	if country := strings.TrimSpace(stringContextValue(query.Context, "country")); country != "" {
+		query.Context["country"] = country
+	}
+	if len(stringArrayContextValue(query.Context, "cities")) == 0 {
+		if city := strings.TrimSpace(stringContextValue(query.Context, "city")); city != "" {
+			query.Context["cities"] = []string{city}
+		}
+	}
+	if len(stringArrayContextValue(query.Context, "types")) == 0 {
+		if customerType := strings.TrimSpace(stringContextValue(query.Context, "type")); customerType != "" {
+			query.Context["types"] = []string{customerType}
+		}
+	}
+	country := firstNonEmpty(stringContextValue(query.Context, "country"), "未填写")
+	cities := stringArrayContextValue(query.Context, "cities")
+	types := stringArrayContextValue(query.Context, "types")
+	limit := discoveryResultLimit(query.Context, defaultPreferences())
+	if query.Message == "" {
+		query.Message = fmt.Sprintf("请根据以下硬性筛选条件发现客户线索：国家=%s；城市=%s；客户类型=%s。最多返回 %d 条。只返回同时满足筛选条件的相关客户或线索；如无法核验，请说明来源和时间，不要编造。",
+			country, firstNonEmpty(strings.Join(cities, "、"), "未填写"), firstNonEmpty(strings.Join(types, "、"), "未填写"), limit)
+	}
+	if query.SessionKey == "" {
+		query.SessionKey = fmt.Sprintf("sta100-overview-customer-discovery-%d", time.Now().UnixNano())
+	}
+	if query.Message == "" || len(query.Message) > 32<<10 {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_ASSISTANT_MESSAGE", "查询内容不能为空且不能超过 32 KiB")
+		return
+	}
+	if !assistantSessionPattern.MatchString(query.SessionKey) {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_ASSISTANT_SESSION", "会话标识只能包含字母、数字、点、下划线、冒号或连字符，且不能超过 80 个字符")
+		return
+	}
+	if query.Model != "" && !a.modelPreviouslyTestedOK(r.Context(), query.Model) {
+		writeAPIError(w, http.StatusBadRequest, "MODEL_NOT_TESTED", "客户发现只能选择已测试通过的模型")
+		return
+	}
+	if query.Model == "" {
+		models := a.openClaw.service.ModelSnapshot()
+		defaultModel := strings.TrimSpace(firstNonEmpty(models.ResolvedDefault, models.DefaultModel))
+		if defaultModel == "" || !a.modelPreviouslyTestedOK(r.Context(), defaultModel) {
+			writeAPIError(w, http.StatusBadRequest, "MODEL_NOT_READY", "请先在设置中配置并测试通过默认模型后再使用客户发现")
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Minute)
+	defer cancel()
+	requestID := fmt.Sprintf("AI-%d", time.Now().UnixNano())
+	queueInfo, releaseQueue, err := a.assistantQueue.acquire(ctx, assistantQueueAgentID(query), query.Feature)
+	if err != nil {
+		writeAPIError(w, http.StatusGatewayTimeout, "ASSISTANT_QUEUE_TIMEOUT", "当前 Agent 队列等待超时，请稍后重试")
+		return
+	}
+	defer releaseQueue()
+	response := a.runAssistantQuery(ctx, query, requestID)
+	response.Queue = queueInfo
+	if queueInfo.Queued {
+		response.Pipeline = append([]assistantPipelineStage{{
+			Stage: "queue", Status: "ok", Detail: queueInfo.Message, DurationMs: queueInfo.WaitedMs,
+			Reason: fmt.Sprintf("后台最多允许 %d 个 Agent 任务同时运行，超出后按请求顺序排队", queueInfo.Limit),
+			Data:   strings.Join(queueInfo.RunningNames, "、"),
+		}}, response.Pipeline...)
+		response.Timings = append([]assistantTiming{{Stage: "queue", Status: "ok", DurationMs: queueInfo.WaitedMs, Reason: queueInfo.Message}}, response.Timings...)
+		response.TotalDurationMs += queueInfo.WaitedMs
+	}
+	a.store.audit(r.Context(), "query", "overview_customer_discovery", query.Feature, requestOperator(r), map[string]any{
+		"usedAgents": response.UsedAgents, "partial": response.Partial, "items": len(response.Items), "queued": queueInfo.Queued, "queueWaitedMs": queueInfo.WaitedMs,
+	})
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -2119,21 +2384,6 @@ func (a *businessAPI) systemHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[databaseOK && openClawErr == nil], "database": map[string]any{"ok": databaseOK, "schemaVersion": businessSchemaVersion, "bytes": databaseBytes}, "openclaw": map[string]any{"ok": openClawErr == nil, "status": openClawStatus}, "runtime": map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH}, "storage": map[string]any{"ok": diskOK, "availableBytes": available, "privateFileBytes": privateBytes}, "index": map[string]any{"files": len(privateFiles), "indexed": indexedFiles, "status": "waiting_raw_data_format"}, "rawData": map[string]any{"status": "todo", "reason": "客户原始数据格式待提供"}})
-}
-
-func (a *businessAPI) templatesRouter(w http.ResponseWriter, r *http.Request, parts []string) {
-	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0, "status": "waiting_spec"})
-		return
-	}
-	if r.Method == http.MethodPatch {
-		if !allowMutation(w, r, http.MethodPatch) {
-			return
-		}
-	} else if !allowMutation(w, r, http.MethodPost) {
-		return
-	}
-	writeTODO(w, "TODO_TEMPLATE_SPEC", "模板接口已保留，需客户提供正式模板、字段映射和 OCR 规则", []string{"模板样例", "占位符规范", "OCR 引擎", "纸张语言签章", "发布规则"})
 }
 
 func (a *businessAPI) agentBackupsHandler(w http.ResponseWriter, r *http.Request) {

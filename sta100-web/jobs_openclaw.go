@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -22,7 +23,7 @@ import (
 var jobEveryMinutesPattern = regexp.MustCompile(`每\s*(\d+)\s*分钟`)
 var jobEveryHoursPattern = regexp.MustCompile(`每\s*(\d+)\s*小时`)
 
-const businessResultVersion = 8
+const businessResultVersion = 9
 const structuredBusinessResultSchema = "sta100.business.v1"
 const newsWorkspaceOutputDir = "openclaw/workspaces/sta100-news-curator/output"
 const recommendationWorkspaceOutputDir = "openclaw/workspaces/sta100-recommend-curator/output"
@@ -62,6 +63,19 @@ func (a *businessAPI) jobsRuntimeHandler(w http.ResponseWriter, r *http.Request)
 		response["syncError"] = userJobSyncError(err)
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// refreshOverviewJobRuntime reads the authoritative OpenClaw cron state before
+// rendering the overview. The overview must not keep showing the previous
+// nextRun/lastRun after OpenClaw has already executed a built-in job.
+func (a *businessAPI) refreshOverviewJobRuntime(ctx context.Context) {
+	// The bootstrap and overview endpoints are also the first data load after a
+	// refresh. Reconcile the built-in jobs there so a stale local `failed` state
+	// cannot hide a result that OpenClaw has already written. Keep this bounded:
+	// a slow gateway must not prevent the rest of the page from loading.
+	refreshCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	_, _ = a.syncBuiltInJobs(refreshCtx)
 }
 
 func (a *businessAPI) jobRuntimeAction(w http.ResponseWriter, r *http.Request, id, action string) {
@@ -157,13 +171,13 @@ func (a *businessAPI) syncBuiltInJobs(ctx context.Context) ([]Job, error) {
 			if items[index].BuiltIn {
 				items[index].SyncStatus = "unavailable"
 				items[index].SyncMessage = userJobSyncError(err)
-				if items[index].Enabled {
+				if items[index].Enabled && strings.TrimSpace(items[index].Status) == "" {
 					items[index].Status = "unsynced"
 				}
 				_ = a.store.put(ctx, "jobs", items[index].ID, items[index])
 			}
 		}
-		return items, err
+		return items, nil
 	}
 	items = mergeCronRuntime(items, runtime.Jobs)
 	byID := make(map[string]orchestrator.CronJob, len(runtime.Jobs))
@@ -311,9 +325,9 @@ func applyBuiltInJobDefaults(item Job) Job {
 		"JOB-INDEX": {
 			Name:           "数据索引维护",
 			Kind:           "index",
-			Description:    "扫描本机私有文件元数据，正式正文解析和向量索引等待原始数据格式。",
+			Description:    "把本机私有/共享知识库同步到各 Agent 专题知识库；正文解析和向量索引等待原始数据格式。",
 			AgentID:        "sta100-knowledge",
-			Prompt:         "检查本地私有文件是否需要解析、分类、去重和索引。",
+			Prompt:         "检查本机私有/共享知识库变化，并同步到对应 Agent 专题知识库。",
 			Schedule:       "每天",
 			Enabled:        true,
 			OutputTarget:   "private_files",
@@ -370,6 +384,7 @@ type recommendationResultItem struct {
 	Desc      string `json:"desc"`
 	Why       string `json:"why"`
 	Detail    string `json:"detail"`
+	Details   string `json:"details"`
 	Content   string `json:"content"`
 	Summary   string `json:"summary"`
 	Body      string `json:"body"`
@@ -426,19 +441,38 @@ func (a *businessAPI) syncJobBusinessResult(ctx context.Context, item Job, runti
 	if runtime.State.LastRunAtMs <= item.LastProcessedRunAtMs && !reparseOldResult {
 		return item
 	}
+	previousBusinessStatus := item.BusinessStatus
 	item.BusinessStatus = "syncing"
 	item.BusinessMessage = "任务已执行，正在整理结果并更新业务数据。"
 
 	runs, err := a.openClaw.service.CronRuns(ctx, runtime.ID, 20)
 	if err != nil {
-		item.BusinessStatus = "failed"
-		item.BusinessMessage = "任务已执行，但暂时无法读取 OpenClaw 运行结果：" + userJobSyncError(err)
+		item.SyncStatus = "unavailable"
+		item.SyncMessage = userJobSyncError(err)
+		if previousBusinessStatus == "" || previousBusinessStatus == "waiting" {
+			item.BusinessStatus = "needs_review"
+		}
+		item.BusinessMessage = "任务已执行，但暂时无法读取 OpenClaw 运行结果，页面继续展示本机缓存数据。"
+		if previousBusinessStatus == "updated" {
+			item.BusinessMessage = "任务结果已更新，但运行明细暂时不可读，页面继续展示本机缓存数据。"
+		}
 		return item
 	}
 	item.LastProcessedRunAtMs = runtime.State.LastRunAtMs
 	run := latestCronRun(runs.Entries)
 	if run == nil {
 		if runtimeStatus := cronRuntimeStatus(runtime); isCronFailureStatus(runtimeStatus) {
+			if recovered, recoverErr := a.recoverRecommendationAfterCronFailure(ctx, item, runtime.State.LastRunAtMs); recoverErr == nil && recovered > 0 {
+				item.BusinessStatus = "updated"
+				item.BusinessUpdatedAt = currentText()
+				item.BusinessMessage = fmt.Sprintf("OpenClaw 推荐任务异常：%s；已恢复本次运行生成的 %d 条推荐。", cronFailureMessage(orchestrator.CronRun{
+					Status:      runtimeStatus,
+					Error:       firstNonEmpty(runtime.State.LastRunError, runtime.State.LastError),
+					ErrorReason: runtime.State.LastErrorReason,
+				}), recovered)
+				item.BusinessResultVersion = businessResultVersion
+				return item
+			}
 			item.BusinessStatus = "failed"
 			item.BusinessMessage = cronFailureMessage(orchestrator.CronRun{
 				Status:      runtimeStatus,
@@ -456,6 +490,13 @@ func (a *businessAPI) syncJobBusinessResult(ctx context.Context, item Job, runti
 	item.LastRunID = run.RunID
 	runStatus := firstNonEmpty(run.Status, cronRuntimeStatus(runtime))
 	if isCronFailureStatus(runStatus) || strings.TrimSpace(run.Error) != "" {
+		if recovered, recoverErr := a.recoverRecommendationAfterCronFailure(ctx, item, runtime.State.LastRunAtMs); recoverErr == nil && recovered > 0 {
+			item.BusinessStatus = "updated"
+			item.BusinessUpdatedAt = currentText()
+			item.BusinessMessage = fmt.Sprintf("OpenClaw 推荐任务异常：%s；已恢复本次运行生成的 %d 条推荐。", cronFailureMessage(*run), recovered)
+			item.BusinessResultVersion = businessResultVersion
+			return item
+		}
 		item.BusinessStatus = "failed"
 		item.BusinessMessage = cronFailureMessage(*run)
 		item.BusinessResultVersion = businessResultVersion
@@ -474,6 +515,20 @@ func (a *businessAPI) syncJobBusinessResult(ctx context.Context, item Job, runti
 			result, ok = parseCronBusinessResult(run.Summary)
 			if !ok {
 				result, ok = parseCronMarkdownBusinessResult(item.OutputTarget, run.Summary)
+			}
+		}
+		if !ok && (run.SessionID != "" || run.SessionKey != "") && item.AgentID != "" {
+			if full := loadAgentSessionOutput(item.AgentID, run.SessionID, run.SessionKey); full != "" && full != run.Summary {
+				if item.OutputTarget == "news" {
+					result, ok = parseNewsBusinessResult(full, runtime.State.LastRunAtMs)
+				} else if item.OutputTarget == "recommendations" {
+					result, ok = parseRecommendationBusinessResult(full, runtime.State.LastRunAtMs)
+				} else {
+					result, ok = parseCronBusinessResult(full)
+					if !ok {
+						result, ok = parseCronMarkdownBusinessResult(item.OutputTarget, full)
+					}
+				}
 			}
 		}
 		if !ok {
@@ -556,13 +611,13 @@ func (a *businessAPI) syncJobBusinessResult(ctx context.Context, item Job, runti
 		count, err := a.refreshPrivateFileMetadata(ctx)
 		if err != nil {
 			item.BusinessStatus = "failed"
-			item.BusinessMessage = "文件元数据扫描失败：" + err.Error()
+			item.BusinessMessage = "Agent 知识库同步失败：" + err.Error()
 			item.BusinessResultVersion = businessResultVersion
 			return item
 		}
 		item.BusinessStatus = "updated"
 		item.BusinessUpdatedAt = currentText()
-		item.BusinessMessage = fmt.Sprintf("已完成 %d 个本地文件的元数据复核；正文解析和向量索引仍按数据格式待补充。", count)
+		item.BusinessMessage = fmt.Sprintf("已完成 %d 个本地文件复核，并同步到对应 Agent 知识库；可解析文件已建立本机向量索引。", count)
 		item.BusinessResultVersion = businessResultVersion
 	default:
 		item.BusinessStatus = "needs_review"
@@ -570,6 +625,27 @@ func (a *businessAPI) syncJobBusinessResult(ctx context.Context, item Job, runti
 		item.BusinessResultVersion = businessResultVersion
 	}
 	return item
+}
+
+// A cron run can time out after the Agent has already written its structured
+// workspace output. Recover only a file created after this run started, so an
+// older successful batch is never presented as the failed run's result.
+func (a *businessAPI) recoverRecommendationAfterCronFailure(ctx context.Context, job Job, startedAtMs int64) (int, error) {
+	if job.OutputTarget != "recommendations" {
+		return 0, nil
+	}
+	result, ok := loadLatestRecommendationWorkspaceResultSince(startedAtMs)
+	if !ok {
+		return 0, nil
+	}
+	count, err := a.persistRecommendations(ctx, job, result.Items)
+	if err != nil {
+		return 0, err
+	}
+	if visible, visibleErr := a.displayableRecommendationCount(ctx); visibleErr == nil {
+		return visible, nil
+	}
+	return count, nil
 }
 
 func latestCronRun(entries []orchestrator.CronRun) *orchestrator.CronRun {
@@ -697,21 +773,147 @@ func firstPositiveInt64(values ...int64) int64 {
 	return 0
 }
 
+// loadAgentSessionOutput 从 <dataDir>/openclaw-state/agents/<agentID>/sessions/<sessionID>.jsonl
+// 里读出最后一条 assistant 消息的正文。OpenClaw gateway 返回给 sta100-web 的 run.Summary
+// 一般被截到 ~2000 字符，session JSONL 才是 Agent 完整输出。
+//
+// run.SessionID 是 orchestrator 的 session id，可能与 .jsonl 文件名不一样；
+// run.SessionKey 的格式是 agent:<agentID>:cron:<jobID>:run:<fileSessionID>，
+// 末尾的 fileSessionID 才是真正写入 sessions/ 目录的 .jsonl 文件名片段。
+func loadAgentSessionOutput(agentID, sessionID, sessionKey string) string {
+	agentID = strings.TrimSpace(agentID)
+	sessionID = strings.TrimSpace(sessionID)
+	sessionKey = strings.TrimSpace(sessionKey)
+	if agentID == "" {
+		return ""
+	}
+	ids := []string{sessionID}
+	if parts := strings.Split(sessionKey, ":"); len(parts) > 0 {
+		ids = append(ids, parts[len(parts)-1])
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if text := readAgentSessionFile(agentID, id); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func readAgentSessionFile(agentID, sessionID string) string {
+	candidates := []string{
+		filepath.Join("data", "openclaw-state", "agents", agentID, "sessions", sessionID+".jsonl"),
+		filepath.Join("openclaw-state", "agents", agentID, "sessions", sessionID+".jsonl"),
+	}
+	if root := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")); root != "" {
+		candidates = append(candidates, filepath.Join(root, "agents", agentID, "sessions", sessionID+".jsonl"))
+	}
+	if root := strings.TrimSpace(os.Getenv("STA100_DATA_ROOT")); root != "" {
+		candidates = append(candidates, filepath.Join(root, "data", "openclaw-state", "agents", agentID, "sessions", sessionID+".jsonl"))
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		return extractLatestAssistantText(data)
+	}
+	return ""
+}
+
+func extractLatestAssistantText(data []byte) string {
+	var last string
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var rec map[string]json.RawMessage
+		if err := json.Unmarshal(line, &rec); err != nil {
+			continue
+		}
+		var msgType string
+		_ = json.Unmarshal(rec["type"], &msgType)
+		if msgType != "message" {
+			continue
+		}
+		var msg struct {
+			Role    string            `json:"role"`
+			Content []json.RawMessage `json:"content"`
+		}
+		_ = json.Unmarshal(rec["message"], &msg)
+		if msg.Role != "assistant" {
+			continue
+		}
+		var text strings.Builder
+		for _, block := range msg.Content {
+			var b struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(block, &b); err != nil {
+				continue
+			}
+			if b.Type == "text" && b.Text != "" {
+				text.WriteString(b.Text)
+			}
+		}
+		if s := strings.TrimSpace(text.String()); s != "" {
+			last = s
+		}
+	}
+	return last
+}
+
 func parseCronBusinessResult(summary string) (cronBusinessResult, bool) {
 	startMarker, endMarker := "[STA100_RESULT]", "[/STA100_RESULT]"
-	start := strings.Index(summary, startMarker)
-	if start >= 0 {
-		payload := strings.TrimSpace(summary[start+len(startMarker):])
-		if end := strings.Index(payload, endMarker); end >= 0 {
-			payload = strings.TrimSpace(payload[:end])
-		}
-		var result cronBusinessResult
-		decoder := json.NewDecoder(strings.NewReader(payload))
-		if err := decoder.Decode(&result); err == nil && validCronBusinessResult(result) {
+	if start := strings.Index(summary, startMarker); start >= 0 {
+		// 可能有多个 STA100_RESULT 块：先尝试最后一个非空块，因为早期块常常是
+		// Agent 在中途交出的占位结果（items=[] 或 thinking 调试块）。如果
+		// 最后一个块不能通过 validCronBusinessResult，则回退到第一个块。
+		if result, ok := decodeLastValidCronBusinessResult(summary, startMarker, endMarker); ok {
 			return result, true
+		}
+		if end := strings.Index(summary[start+len(startMarker):], endMarker); end >= 0 {
+			payload := strings.TrimSpace(summary[start+len(startMarker) : start+len(startMarker)+end])
+			var result cronBusinessResult
+			decoder := json.NewDecoder(strings.NewReader(payload))
+			if err := decoder.Decode(&result); err == nil && validCronBusinessResult(result) {
+				return result, true
+			}
 		}
 	}
 	return parseUnmarkedBusinessResult(summary)
+}
+
+func decodeLastValidCronBusinessResult(summary, startMarker, endMarker string) (cronBusinessResult, bool) {
+	// 从 summary 末尾倒序扫描最后一对 [STA100_RESULT]…[/STA100_RESULT]，
+	// 这样可以稳定拿到 Agent 最终交付的 JSON 块，而不是它在中途插入的占位空块。
+	searchFrom := len(summary)
+	for {
+		idx := strings.LastIndex(summary[:searchFrom], startMarker)
+		if idx < 0 {
+			return cronBusinessResult{}, false
+		}
+		payloadStart := idx + len(startMarker)
+		endIdx := strings.Index(summary[payloadStart:], endMarker)
+		if endIdx < 0 {
+			searchFrom = idx
+			continue
+		}
+		payload := strings.TrimSpace(summary[payloadStart : payloadStart+endIdx])
+		var result cronBusinessResult
+		if err := json.Unmarshal([]byte(payload), &result); err == nil && validCronBusinessResult(result) {
+			return result, true
+		}
+		// 这个块无效（可能是占位空块/格式示例），继续往前找更早的块。
+		searchFrom = idx
+	}
 }
 
 func validCronBusinessResult(result cronBusinessResult) bool {
@@ -737,7 +939,19 @@ func validCronBusinessResult(result cronBusinessResult) bool {
 		}
 		return false
 	case "recommendations":
-		return meaningfulCronBusinessResult(result)
+		// 与 news 一致：Agent 在缺少可靠证据时返回 items=[] 也是合法结果，
+		// 不应被当成无效而让页面看不到任何推荐。
+		// 非空结果要求至少有一条 title/detail 合规的推荐条目。
+		if len(result.Items) == 0 {
+			return true
+		}
+		for _, raw := range result.Items {
+			var item recommendationResultItem
+			if json.Unmarshal(raw, &item) == nil && validRecommendationResultItem(item) {
+				return true
+			}
+		}
+		return false
 	case "weekly_report":
 		return strings.TrimSpace(result.Summary) != ""
 	default:
@@ -892,6 +1106,20 @@ func parseCronMarkdownBusinessResult(target, summary string) (cronBusinessResult
 				current.summary = append(current.summary, cleanMarkdownText(plainLine))
 				continue
 			}
+			// markdown 中 **为什么推荐：** / **详情：** / **完整内容：** / **摘要：** / **内容：**
+			// 等字段即使被 ** 包住，也应当被当成业务字段，把值写入 summary，
+			// 否则 validRecommendationResultItem 会因为 detail 太短拒收。
+			if value, ok := metadataFieldValue(plainLine,
+				"为什么推荐：", "为什么推荐:", "推荐理由：", "推荐理由:", "reason:", "why:",
+				"详情：", "详情:", "内容：", "内容:", "完整内容：", "完整内容:", "detail:", "content:",
+				"摘要：", "摘要:", "summary:",
+			); ok {
+				cleaned := cleanMarkdownText(value)
+				if cleaned != "" {
+					current.summary = append(current.summary, cleaned)
+				}
+				continue
+			}
 		} else if businessTitleLooksLikeMetadata(plainLine) {
 			continue
 		}
@@ -941,8 +1169,10 @@ func parseCronMarkdownBusinessResult(target, summary string) (cronBusinessResult
 			}
 			value = newsItem
 		} else {
+			fullBody := strings.Join(item.summary, "\n")
 			value = recommendationResultItem{
 				Title: item.title, Desc: strings.Join(item.summary, " "),
+				Detail: fullBody, Content: fullBody, Body: fullBody,
 				Source: item.source, SourceURL: item.sourceURL, Type: item.category, Time: item.time,
 			}
 		}
@@ -1078,35 +1308,43 @@ func loadLatestNewsWorkspaceResultSince(afterMs int64) (cronBusinessResult, bool
 }
 
 func latestWorkspaceOutputFile(dir string) (string, error) {
-	candidates := []string{dir, filepath.Clean(filepath.Join("..", dir)), filepath.Clean(filepath.Join("..", "..", dir))}
+	candidates := workspaceOutputDirCandidates(dir)
 	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(strings.TrimSpace(candidate))
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		if path, ok := latestWorkspaceOutputFileInDir(candidate); ok {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("workspace output not found: %s", dir)
+}
+
+func latestWorkspaceOutputFileInDir(candidate string) (string, bool) {
 	type fileInfo struct {
 		path string
 		mod  time.Time
 	}
 	files := make([]fileInfo, 0)
-	for _, candidate := range candidates {
-		if seen[candidate] {
+	entries, err := os.ReadDir(candidate)
+	if err != nil {
+		return "", false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
 			continue
 		}
-		seen[candidate] = true
-		entries, err := os.ReadDir(candidate)
+		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil {
-				continue
-			}
-			files = append(files, fileInfo{path: filepath.Join(candidate, entry.Name()), mod: info.ModTime()})
-		}
+		files = append(files, fileInfo{path: filepath.Join(candidate, entry.Name()), mod: info.ModTime()})
 	}
 	if len(files) == 0 {
-		return "", fmt.Errorf("news workspace output not found")
+		return "", false
 	}
 	sort.Slice(files, func(i, j int) bool {
 		if files[i].mod.Equal(files[j].mod) {
@@ -1114,7 +1352,44 @@ func latestWorkspaceOutputFile(dir string) (string, error) {
 		}
 		return files[i].mod.After(files[j].mod)
 	})
-	return files[0].path, nil
+	return files[0].path, true
+}
+
+func workspaceOutputDirCandidates(dir string) []string {
+	dir = filepath.Clean(strings.TrimSpace(dir))
+	candidates := []string{}
+	for _, root := range releaseRootCandidates() {
+		candidates = append(candidates, filepath.Join(root, dir))
+	}
+	candidates = append(candidates, dir, filepath.Clean(filepath.Join("..", dir)), filepath.Clean(filepath.Join("..", "..", dir)))
+	return candidates
+}
+
+func releaseRootCandidates() []string {
+	candidates := []string{}
+	if manifest := strings.TrimSpace(os.Getenv("STA100_AGENT_MANIFEST")); manifest != "" {
+		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(manifest), "..")))
+	}
+	if bin := strings.TrimSpace(os.Getenv("OPENCLAW_BIN")); bin != "" {
+		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(bin), "..", "..")))
+	}
+	if db := strings.TrimSpace(os.Getenv("STA100_DB_PATH")); db != "" {
+		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(db), "..")))
+	}
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		candidates = append(candidates, filepath.Clean(filepath.Join(filepath.Dir(exe), "..")))
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(strings.TrimSpace(candidate))
+		if candidate == "." || candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		out = append(out, candidate)
+	}
+	return out
 }
 
 func markdownSectionCategory(section string) string {
@@ -1296,7 +1571,7 @@ const (
 
 func validRecommendationResultItem(input recommendationResultItem) bool {
 	title := cleanBusinessGeneratedTitle(input.Title)
-	detail := cleanBusinessGeneratedBody(firstNonEmpty(input.Detail, input.Content, input.Body))
+	detail := cleanBusinessGeneratedBody(firstNonEmpty(input.Detail, input.Details, input.Content, input.Body))
 	if title == "" || businessTitleLooksLikeMetadata(title) || shouldSkipRecommendationResult(input) {
 		return false
 	}
@@ -1971,12 +2246,12 @@ func (a *businessAPI) persistRecommendations(ctx context.Context, job Job, rawIt
 		}
 		input.Title = cleanBusinessGeneratedTitle(input.Title)
 		input.Why = cleanBusinessGeneratedBody(firstNonEmpty(input.Why, input.Reason))
-		input.Detail = cleanBusinessGeneratedBody(firstNonEmpty(input.Detail, input.Content, input.Body))
+		input.Detail = cleanBusinessGeneratedBody(firstNonEmpty(input.Detail, input.Details, input.Content, input.Body))
 		if sameBusinessText(input.Why, input.Detail) {
 			input.Why = ""
 		}
 		brief := cleanBusinessGeneratedBody(firstNonEmpty(input.Desc, input.Why))
-		full := cleanBusinessGeneratedBody(firstNonEmpty(input.Detail, input.Content, input.Body, input.Why, input.Reason))
+		full := cleanBusinessGeneratedBody(firstNonEmpty(input.Detail, input.Details, input.Content, input.Body, input.Why, input.Reason))
 		input.Source = cleanBusinessGeneratedTitle(firstNonEmpty(input.Source, "OpenClaw Agent"))
 		input.Type = cleanBusinessGeneratedTitle(firstNonEmpty(input.Type, "行业推荐"))
 		input.Desc = firstNonEmpty(brief, newsBrief(firstNonEmpty(input.Why, full), 80))
@@ -2002,6 +2277,9 @@ func (a *businessAPI) persistRecommendations(ctx context.Context, job Job, rawIt
 		}
 		count++
 	}
+	if err := a.trimRecommendations(ctx, 200); err != nil {
+		return count, err
+	}
 	return count, nil
 }
 
@@ -2011,6 +2289,37 @@ func (a *businessAPI) displayableRecommendationCount(ctx context.Context) (int, 
 		return 0, err
 	}
 	return len(filterDisplayableRecommendations(items)), nil
+}
+
+func (a *businessAPI) recoverLatestRecommendationWorkspaceOutput(ctx context.Context, job Job) (int, error) {
+	result, ok := loadLatestRecommendationWorkspaceResultSince(0)
+	if !ok {
+		return 0, nil
+	}
+	return a.persistRecommendations(ctx, applyBuiltInJobDefaults(job), result.Items)
+}
+
+func (a *businessAPI) ensureRecommendationsAvailable(ctx context.Context) ([]Recommendation, error) {
+	items, err := listRecords[Recommendation](ctx, a.store, "recommendations")
+	if err != nil {
+		return nil, err
+	}
+	visible := filterDisplayableRecommendations(items)
+	if len(visible) > 0 {
+		return visible, nil
+	}
+	recovered, recoverErr := a.recoverLatestRecommendationWorkspaceOutput(ctx, Job{ID: "JOB-RECOMMEND", AgentID: "sta100-recommend-curator", OutputTarget: "recommendations"})
+	if recoverErr != nil {
+		return visible, recoverErr
+	}
+	if recovered == 0 {
+		return visible, nil
+	}
+	items, err = listRecords[Recommendation](ctx, a.store, "recommendations")
+	if err != nil {
+		return nil, err
+	}
+	return filterDisplayableRecommendations(items), nil
 }
 
 func (a *businessAPI) persistRecommendationNarrative(ctx context.Context, job Job, summary string) (int, error) {
@@ -2037,6 +2346,9 @@ func (a *businessAPI) persistRecommendationNarrative(ctx context.Context, job Jo
 		DataStatus:  "generated_narrative",
 	}
 	if err := a.putOrCreate(ctx, "recommendations", record.ID, record); err != nil {
+		return 0, err
+	}
+	if err := a.trimRecommendations(ctx, 200); err != nil {
 		return 0, err
 	}
 	return 1, nil
@@ -2075,6 +2387,9 @@ func (a *businessAPI) runBuiltInBusinessJobNow(ctx context.Context, id string) (
 		return nil, err
 	}
 	item = applyBuiltInJobDefaults(item)
+	if item.OutputTarget == "recommendations" {
+		return a.runRecommendationAgentFromSnapshot(ctx, item, preferences)
+	}
 	if item.OpenClawID == "" {
 		updated, err := a.syncOneJob(ctx, item)
 		if err != nil {
@@ -2196,6 +2511,23 @@ func (a *businessAPI) runBuiltInBusinessJobNow(ctx context.Context, id string) (
 			result, ok = parseCronMarkdownBusinessResult(item.OutputTarget, run.Summary)
 		}
 	}
+	// gateway 返回的 run.Summary 通常被截断到 ~2000 字符，截断后 [STA100_RESULT] JSON
+	// 块无法被解析。完整 Agent 输出写在 data/openclaw-state/agents/<id>/sessions/<sid>.jsonl
+	// 里，所以如果上面解析失败、且 SessionID 非空，就从 session 文件里补回完整正文再重试。
+	if !ok && (run.SessionID != "" || run.SessionKey != "") && item.AgentID != "" {
+		if full := loadAgentSessionOutput(item.AgentID, run.SessionID, run.SessionKey); full != "" && full != run.Summary {
+			if item.OutputTarget == "news" {
+				result, ok = parseNewsBusinessResult(full, firstPositiveInt64(run.RunAtMs, run.EndedAtMs, run.StartedAtMs))
+			} else if item.OutputTarget == "recommendations" {
+				result, ok = parseRecommendationBusinessResult(full, firstPositiveInt64(run.RunAtMs, run.EndedAtMs, run.StartedAtMs))
+			} else {
+				result, ok = parseCronBusinessResult(full)
+				if !ok {
+					result, ok = parseCronMarkdownBusinessResult(item.OutputTarget, full)
+				}
+			}
+		}
+	}
 	count := 0
 	switch item.OutputTarget {
 	case "recommendations":
@@ -2295,7 +2627,7 @@ func (a *businessAPI) runBuiltInBusinessJobNow(ctx context.Context, id string) (
 		}
 		item.BusinessStatus = "updated"
 		item.BusinessUpdatedAt = currentText()
-		item.BusinessMessage = fmt.Sprintf("已完成 %d 个本地文件的元数据复核；正文解析和向量索引仍按数据格式待补充。", count)
+		item.BusinessMessage = fmt.Sprintf("已完成 %d 个本地文件复核，并同步到对应 Agent 知识库；可解析文件已建立本机向量索引。", count)
 		item.BusinessResultVersion = businessResultVersion
 	default:
 		item.BusinessStatus = "needs_review"
@@ -2379,6 +2711,37 @@ func (a *businessAPI) recoverLatestSuccessfulNewsRun(ctx context.Context, item J
 	return 0, nil, nil
 }
 
+func (a *businessAPI) recoverLatestNewsWorkspaceOutput(ctx context.Context, job Job) (int, error) {
+	result, ok := loadLatestNewsWorkspaceResultSince(0)
+	if !ok {
+		return 0, nil
+	}
+	return a.persistNews(ctx, applyBuiltInJobDefaults(job), result.Items)
+}
+
+func (a *businessAPI) ensureNewsAvailable(ctx context.Context) ([]NewsItem, error) {
+	items, err := listRecords[NewsItem](ctx, a.store, "news")
+	if err != nil {
+		return nil, err
+	}
+	visible := filterDisplayableNews(items)
+	if len(visible) > 0 {
+		return visible, nil
+	}
+	recovered, recoverErr := a.recoverLatestNewsWorkspaceOutput(ctx, Job{ID: "JOB-NEWS", AgentID: "sta100-news-curator", OutputTarget: "news"})
+	if recoverErr != nil {
+		return visible, recoverErr
+	}
+	if recovered == 0 {
+		return visible, nil
+	}
+	items, err = listRecords[NewsItem](ctx, a.store, "news")
+	if err != nil {
+		return nil, err
+	}
+	return filterDisplayableNews(items), nil
+}
+
 func latestCronRunSince(entries []orchestrator.CronRun, startedAtMs int64) *orchestrator.CronRun {
 	var latest *orchestrator.CronRun
 	var latestScore int64
@@ -2394,6 +2757,125 @@ func latestCronRunSince(entries []orchestrator.CronRun, startedAtMs int64) *orch
 		}
 	}
 	return latest
+}
+
+func (a *businessAPI) runRecommendationAgentFromSnapshot(ctx context.Context, item Job, preferences UserPreferences) (map[string]any, error) {
+	item = applyBuiltInJobDefaults(item)
+	limit := preferences.RecommendationShowLimit
+	if limit < 1 || limit > 20 {
+		limit = 5
+	}
+	_, _ = a.recoverLatestNewsWorkspaceOutput(context.Background(), Job{ID: "JOB-NEWS", AgentID: "sta100-news-curator", OutputTarget: "news"})
+	news, _ := listRecords[NewsItem](ctx, a.store, "news")
+	news = filterDisplayableNews(news)
+	if len(news) == 0 {
+		item.BusinessStatus = "needs_review"
+		item.BusinessMessage = "为你推荐需要先有可展示的行业新闻或业务信号；当前未读取到有效输入，未生成推荐。"
+		item.BusinessResultVersion = businessResultVersion
+		item.UpdatedAt = currentText()
+		_ = a.store.put(context.Background(), "jobs", item.ID, item)
+		return map[string]any{"submitted": false, "completed": true, "job": item, "message": item.BusinessMessage, "updatedCount": 0}, nil
+	}
+	snapshotLimit := limit
+	if snapshotLimit < 5 {
+		snapshotLimit = 5
+	}
+	if snapshotLimit > 10 {
+		snapshotLimit = 10
+	}
+	if snapshotLimit > len(news) {
+		snapshotLimit = len(news)
+	}
+	snapshot := make([]map[string]string, 0, snapshotLimit)
+	for index := 0; index < snapshotLimit; index++ {
+		newsItem := news[index]
+		snapshot = append(snapshot, map[string]string{
+			"category":  newsItem.Category,
+			"title":     newsItem.Title,
+			"summary":   newsBrief(newsItem.Summary, 120),
+			"content":   newsBrief(newsItem.Content, 420),
+			"source":    newsItem.Source,
+			"sourceUrl": newsItem.SourceURL,
+			"time":      newsItem.Time,
+			"relevance": newsItem.Relevance,
+		})
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"countries": strings.TrimSpace(preferences.NewsCountries),
+		"topics":    strings.TrimSpace(preferences.NewsTopics),
+		"limit":     limit,
+		"news":      snapshot,
+	})
+	message := "请基于以下 STA-100 已入库行业新闻和推荐设置生成为你推荐，不要重新做大范围联网检索；只使用输入 JSON 中能复核的事实，按推荐价值排序。\n\n" +
+		string(payload) + "\n\n" +
+		structuredBusinessPrompt(structuredBusinessPromptSpec{
+			ModuleName: "为你推荐",
+			Scope:      "输入 JSON 中的行业新闻、关注国家和关注主题。不得使用演示数据；不得把新闻原文简单复述成推荐；需要说明为什么值得业务人员关注。",
+			Fields:     []string{"title", "why", "detail", "source", "sourceUrl", "type", "time", "desc"},
+			ResultType: "recommendations",
+			CountHint:  fmt.Sprintf("最多输出 %d 条推荐，items 数量不得超过该上限。", limit),
+			Notes: []string{
+				"title 写推荐标题；why 写 1-2 句推荐理由；detail 写完整展开内容，控制在 120-240 个中文字符，说明业务影响、下一步动作和需要复核的点，不要重复输入新闻全文。",
+				"source/sourceUrl/time 必须来自输入新闻；type 写推荐类别；desc 写 30-80 字摘要。",
+				"没有足够事实支撑时 items 输出空数组，不要编造。",
+			},
+			Schema: structuredBusinessResultSchema,
+		})
+	startedAt := time.Now()
+	result, err := a.openClaw.service.SendAgentMessage(ctx, orchestrator.AgentMessageInput{
+		AgentID:    item.AgentID,
+		Message:    message,
+		SessionKey: "sta100-recommend-refresh",
+		Sources:    []string{"Agent 知识库"},
+	})
+	durationMs := time.Since(startedAt).Milliseconds()
+	item.Status = "success"
+	item.LastRun = currentText()
+	item.UpdatedAt = currentText()
+	item.SyncStatus = "synced"
+	item.SyncMessage = "已通过 OpenClaw 推荐 Agent 完成轻量刷新"
+	if err != nil {
+		item.Status = "failed"
+		item.LastResult = userJobExecutionError(err.Error())
+		item.BusinessStatus = "failed"
+		item.BusinessMessage = item.LastResult
+		item.BusinessResultVersion = businessResultVersion
+		_ = a.store.put(context.Background(), "jobs", item.ID, item)
+		return map[string]any{"submitted": true, "completed": true, "job": item, "message": item.BusinessMessage, "durationMs": durationMs}, nil
+	}
+	item.LastRunID = result.RunID
+	item.LastResult = firstNonEmpty(result.Text, "ok")
+	parsed, ok := parseRecommendationBusinessResult(result.Text, 0)
+	count := 0
+	if ok && parsed.Type == "recommendations" {
+		var persistErr error
+		count, persistErr = a.persistRecommendations(context.Background(), item, parsed.Items)
+		if persistErr != nil {
+			item.BusinessStatus = "failed"
+			item.BusinessMessage = "推荐 Agent 已返回，但写入本机推荐库失败：" + persistErr.Error()
+			item.BusinessResultVersion = businessResultVersion
+			_ = a.store.put(context.Background(), "jobs", item.ID, item)
+			return nil, persistErr
+		}
+	}
+	if count == 0 {
+		recovered, _ := a.recoverLatestRecommendationWorkspaceOutput(context.Background(), item)
+		count = recovered
+	}
+	if count == 0 {
+		item.BusinessStatus = "needs_review"
+		item.BusinessMessage = "推荐 Agent 已执行，但没有返回可展示的有效推荐；请复核推荐输出格式。"
+	} else {
+		if visibleCount, err := a.displayableRecommendationCount(context.Background()); err == nil && visibleCount > 0 {
+			count = visibleCount
+		}
+		item.BusinessStatus = "updated"
+		item.BusinessMessage = fmt.Sprintf("已从 OpenClaw 推荐 Agent 同步 %d 条推荐。", count)
+	}
+	item.BusinessUpdatedAt = currentText()
+	item.BusinessResultVersion = businessResultVersion
+	_ = a.store.put(context.Background(), "jobs", item.ID, item)
+	return map[string]any{"submitted": true, "completed": true, "job": item, "message": item.BusinessMessage, "updatedCount": count, "durationMs": durationMs}, nil
 }
 
 func (a *businessAPI) persistNews(ctx context.Context, job Job, rawItems []json.RawMessage) (int, error) {
@@ -2438,7 +2920,52 @@ func (a *businessAPI) persistNews(ctx context.Context, job Job, rawItems []json.
 		}
 		count++
 	}
+	if err := a.trimNews(ctx, 200); err != nil {
+		return count, err
+	}
 	return count, nil
+}
+
+func (a *businessAPI) trimRecommendations(ctx context.Context, keep int) error {
+	items, err := listRecords[Recommendation](ctx, a.store, "recommendations")
+	if err != nil {
+		return err
+	}
+	if keep <= 0 || len(items) <= keep {
+		return nil
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := firstNonEmpty(items[i].UpdatedAt, items[i].Time, items[i].ID)
+		right := firstNonEmpty(items[j].UpdatedAt, items[j].Time, items[j].ID)
+		return left > right
+	})
+	for _, item := range items[keep:] {
+		if err := a.store.softDelete(ctx, "recommendations", item.ID); err != nil && !errors.Is(err, errRecordNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *businessAPI) trimNews(ctx context.Context, keep int) error {
+	items, err := listRecords[NewsItem](ctx, a.store, "news")
+	if err != nil {
+		return err
+	}
+	if keep <= 0 || len(items) <= keep {
+		return nil
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := firstNonEmpty(items[i].UpdatedAt, items[i].Time, items[i].ID)
+		right := firstNonEmpty(items[j].UpdatedAt, items[j].Time, items[j].ID)
+		return left > right
+	})
+	for _, item := range items[keep:] {
+		if err := a.store.softDelete(ctx, "news", item.ID); err != nil && !errors.Is(err, errRecordNotFound) {
+			return err
+		}
+	}
+	return nil
 }
 
 func newsBrief(value string, limit int) string {
@@ -2514,6 +3041,12 @@ func (a *businessAPI) refreshPrivateFileMetadata(ctx context.Context) (int, erro
 			available++
 		}
 	}
+	if _, err := a.syncKnowledgeSources(ctx); err != nil {
+		return available, err
+	}
+	if _, err := a.syncAgentKnowledgeFromLocalSources(ctx); err != nil {
+		return available, err
+	}
 	return available, nil
 }
 
@@ -2534,18 +3067,30 @@ func (a *businessAPI) syncRecommendationJobs(ctx context.Context, preferences Us
 		item.ScheduleKind = "every"
 		item.ScheduleValue = scheduleValue
 		item.Schedule = "每 " + frequency
+		// 仅在用户未配置时用 defaultPreferences() 兜底"关注国家/主题"，
+		// 避免推荐/新闻 prompt 退化成 "根据关注国家：；关注主题：" 这种空字符串。
+		// 注意：不要修改 preferences 本体，只补缺本轮 prompt 使用的字段。
+		defaults := defaultPreferences()
+		countries := strings.TrimSpace(preferences.NewsCountries)
+		if countries == "" {
+			countries = defaults.NewsCountries
+		}
+		topics := strings.TrimSpace(preferences.NewsTopics)
+		if topics == "" {
+			topics = defaults.NewsTopics
+		}
 		if item.ID == "JOB-RECOMMEND" {
 			limit := preferences.RecommendationShowLimit
 			if limit < 1 || limit > 20 {
 				limit = 5
 			}
-			item.Prompt = fmt.Sprintf("根据关注国家：%s；关注主题：%s；读取本地业务数据和可用公开来源，最多生成 %d 条有效推荐。", preferences.NewsCountries, preferences.NewsTopics, limit)
+			item.Prompt = fmt.Sprintf("根据关注国家：%s；关注主题：%s；读取本地业务数据和可用公开来源，最多生成 %d 条有效推荐。", countries, topics, limit)
 		} else {
 			fetchLimit := preferences.NewsFetchLimit
 			if fetchLimit < 1 || fetchLimit > 100 {
 				fetchLimit = 5
 			}
-			item.Prompt = fmt.Sprintf("按以下关注国家：%s；关注主题：%s；指定来源：%s，整理骑行行业新闻，每次最多输出 %d 条有效新闻。", preferences.NewsCountries, preferences.NewsTopics, preferences.NewsSources, fetchLimit)
+			item.Prompt = fmt.Sprintf("按以下关注国家：%s；关注主题：%s；指定来源：%s，整理骑行行业新闻，每次最多输出 %d 条有效新闻。", countries, topics, newsSourcesPrompt(preferences), fetchLimit)
 		}
 		updated, syncErr := a.syncOneJob(ctx, item)
 		if syncErr != nil {
@@ -2556,6 +3101,26 @@ func (a *businessAPI) syncRecommendationJobs(ctx context.Context, preferences Us
 		}
 	}
 	return fmt.Sprintf("推荐和行业新闻任务已按每 %s 更新%s", frequency, map[bool]string{true: "", false: "，当前已停用"}[preferences.RecommendationEnabled]), nil
+}
+
+func newsSourcesPrompt(preferences UserPreferences) string {
+	parts := []string{}
+	if strings.TrimSpace(preferences.NewsSources) != "" {
+		parts = append(parts, strings.TrimSpace(preferences.NewsSources))
+	}
+	if len(preferences.NewsMediaCategories) > 0 {
+		parts = append(parts, "媒体类别："+strings.Join(preferences.NewsMediaCategories, "、"))
+	}
+	if len(preferences.NewsMediaIDs) > 0 {
+		parts = append(parts, "媒体ID："+strings.Join(preferences.NewsMediaIDs, "、"))
+	}
+	if strings.TrimSpace(preferences.NewsCustomSources) != "" {
+		parts = append(parts, "自定义来源："+strings.TrimSpace(preferences.NewsCustomSources))
+	}
+	if len(parts) == 0 {
+		return "未配置"
+	}
+	return strings.Join(parts, "\n")
 }
 
 func cronInputFromJob(item Job) orchestrator.CronJobInput {

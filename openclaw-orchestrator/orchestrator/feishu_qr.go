@@ -318,9 +318,14 @@ func (s *Service) applyFeishuRegistration(ctx context.Context, account, domain, 
 		return err
 	}
 	if s.bin != "" && isExecutable(s.bin) {
-		restartCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		restartCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
 		if _, err := s.run(restartCtx, nil, "gateway", "restart"); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				// 配置已写入，网关可能仍在重启中；把超时降级为可复核成功，避免
+				// 飞书扫码在授权已成功时被错误判成失败。
+				return nil
+			}
 			return fmt.Errorf("OpenClaw 网关重启失败: %v", err)
 		}
 	}

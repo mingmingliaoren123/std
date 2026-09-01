@@ -1,0 +1,56 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "news",
+  "items": [
+    {
+      "category": "渠道",
+      "title": "Optima Cycles与德国BIKE&CO达成供应商合作，加速德国独立零售渠道布局",
+      "summary": "8月1日起Dutch ID、Lovens、Dolly三大品牌加入德国BIKE&CO供应商计划",
+      "content": "2026年8月3日，Bike Europe报道荷兰Optima Cycles与德国独立自行车零售商合作组织BIKE&CO签署战略供应商协议，自8月1日起将其旗下Dutch ID、Lovens、Dolly三大品牌正式纳入BIKE&CO面向900余家加盟独立自行车零售商的产品供应计划。合作采用选择性授权，并非所有加盟商自动获得全部品牌销售权，以保护现有经销商关系并维持高端品牌形象。同时，双方将设立Dutch ID产品委员会，邀请核心BIKE&CO经销商参与未来产品定义。官方将在9月4-6日卡塞尔BIKE&CO订单节上正式启动。对德国独立零售渠道而言，此举意味着高端e-bike与电助力货运车家族的产品组合将被重新分配，影响门店品牌矩阵与采购清单。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/53018/optima-cycles-partners-with-bikeco-to-accelerate-growth-in-germany",
+      "time": "2026-08-03",
+      "relevance": "高 - 直接重塑德国独立自行车零售渠道品牌组合"
+    },
+    {
+      "category": "法规",
+      "title": "欧盟更新电池数字护照实施指南，LMT/e-bike电池2027年2月18日起强制持证",
+      "summary": "欧委会发布71项数据点指南，e-bike/LMT电池2027年2月18日强制配数字护照",
+      "content": "2026年8月21日，欧盟委员会根据法规(EU) 2023/1542第77条更新电池数字护照(Digital Batteries Passport)实施指南，对电动车辆电池、轻型交通工具电池(LMT，含e-bike与电动滑板车电池)及容量大于2kWh的工业电池三类产品在2027年2月18日强制要求下须填报的71项数据点逐项标注强制、可选或条件性要求，并标明法律来源。该指南面向整条电池价值链的运营商、合规评估机构与市场监管机构，须与(EU) 2023/1542及配套授权与实施细则一并阅读，本身不创设新法律义务。对所有向欧盟市场投放e-bike的OEM与进口商而言，距离2027年2月窗口已不足半年，建议立即启动电池护照的数据采集、内部系统改造与供应链合规对接。",
+      "source": "EUR-Lex",
+      "sourceUrl": "https://eur-lex.europa.eu/eli/reg/2023/1542/2025-07-31/eng",
+      "time": "2026-08-21",
+      "relevance": "高 - 强制性法规，2027年2月起直接约束所有在欧盟销售的e-bike电池"
+    },
+    {
+      "category": "欧洲市场",
+      "title": "2026年上半年欧盟e-bike进口同比增长36%，中国份额升至41%取代中国台湾",
+      "summary": "上半年欧盟进口e-bike 42.2万辆同比增长36%，中国份额升至41%取代中国台湾",
+      "content": "根据Eurostat最新数据并由Bike Europe报道，2026年上半年欧盟累计进口约42.2万辆e-bike，较2025年同期增长36%，为2023年以来最高半年值。中国供货份额由去年全年水平升至41%，取代中国台湾成为欧盟最大进口来源地。LEVA-EU援引Bike Europe指出，结构性变化主要由波兰等市场对低价e-bike的需求拉动——2026年Q1中国进口均价仅329欧元/台，远低于中国台湾1709欧元/台的均价。进口总量大增但进口额仅同比增长6%至1.44亿欧元，反映低价进口拉低整体单价。该趋势将持续影响欧洲本土OEM、经销商在不同价位带的产品分层与售后服务能力。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/53013/china-leads-as-eu-e-bike-imports-rise-36-in-h1",
+      "time": "2026-06-29",
+      "relevance": "高 - 进口结构剧变直接影响德国、波兰等关注国家渠道与定价策略"
+    },
+    {
+      "category": "欧洲市场",
+      "title": "瑞典运动零售集团WeSports Scandinavia二季度营收同比+55%延续高增长",
+      "summary": "瑞典WS We Sports二季度营收同比+55%，纳斯达克上市后业绩持续高增长",
+      "content": "Bike Europe报道，在斯德哥尔摩Nasdaq First North Premier Growth Market上市的北欧运动、户外与自行车零售集团WS We Sports Scandinavia(WeSports Group)延续高增长：2026年Q1营收同比增长51.8%，Q2再同比+55%(按汇率调整后+21.6%)。集团在瑞典及北欧地区运营多业态体育零售门店，自行车为重要业务线之一。Q2业绩印证其并购与门店整合策略持续见效，未出现市场担心的财务承压迹象。对于关注瑞典市场的厂商与品牌方而言，WeSports是进入北欧零售渠道的关键观察样本，建议持续跟踪其可比门店销售、库存周转及并购后的品牌组合协同，作为欧洲高端户外与自行车零售景气度的领先指标。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52997/sales-and-ma-strategy-secures-ws-wesports-double-digit-growth",
+      "time": "2026-08-01",
+      "relevance": "高 - 覆盖关注国家瑞典，是北欧自行车零售景气度的关键指标"
+    },
+    {
+      "category": "智能骑行",
+      "title": "Avinox智能心率控制系统斩获Eurobike 2026 Award数字方案类奖",
+      "summary": "Avinox凭借蓝牙心率带实时调助力获Eurobike 2026数字方案类奖项",
+      "content": "2026年6月24-27日法兰克福Eurobike展上，DJI旗下电助力驱动系统品牌Avinox凭借Smart Heart Rate Control System获Eurobike Award数字方案类奖项。该系统通过蓝牙与心率带配对，根据骑手实时心率自动调整电机助力输出，使其维持在指定区间，可应用于安全训练、燃脂区间管理、心脏康复训练以及有氧/无氧训练切换等场景。评审团指出，该方案将电助力模式从单一功率数据驱动转向实时生理信号驱动，被认为是真正的范式转变。Avinox展示了e-MTB动力单元结合可穿戴健康设备的AI化方向，标志智能骑行从动力辅助向生理反馈闭环演进。",
+      "source": "Eurobike",
+      "sourceUrl": "https://eurobike.com/frankfurt/en/topics-and-programme/eurobike-award/eurobike-award-2024.html",
+      "time": "2026-06-26",
+      "relevance": "高 - Eurobike官方奖项，体现智能骑行主题的产业级认可"
+    }
+  ]
+}

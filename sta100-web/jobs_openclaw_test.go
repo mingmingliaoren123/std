@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -303,5 +304,93 @@ func TestBuiltInWeeklyJobUsesHiddenSystemAgent(t *testing.T) {
 	job := applyBuiltInJobDefaults(Job{ID: "JOB-WEEKLY", BuiltIn: true, AgentID: "sta100-coordinator"})
 	if job.AgentID != "sta100-weekly-report" {
 		t.Fatalf("AgentID = %q, want sta100-weekly-report", job.AgentID)
+	}
+}
+
+// TestValidCronBusinessResultAcceptsEmptyRecommendations 锁定 recommendations 与 news 行为一致：
+// 当 Agent 因为没有可靠证据返回 items=[] 时，结果仍应被判定为合法，
+// 否则 go 侧会拒收整个结果块，概览页永远看不到任何推荐。
+func TestValidCronBusinessResultAcceptsEmptyRecommendations(t *testing.T) {
+	if !validCronBusinessResult(cronBusinessResult{Type: "recommendations", Items: nil}) {
+		t.Fatal("empty recommendations must be accepted, matching news policy")
+	}
+	if !validCronBusinessResult(cronBusinessResult{Type: "recommendations", Items: []json.RawMessage{}}) {
+		t.Fatal("zero-length recommendations items must be accepted, matching news policy")
+	}
+}
+
+// TestValidCronBusinessResultRejectsInvalidRecommendations 保留既有严格性：
+// 当 items 非空但没有任何一条合规条目时，仍然应该被拒收，避免把示例数据/格式字段
+// 当成业务结果。
+func TestValidCronBusinessResultRejectsInvalidRecommendations(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{"title": "标题", "detail": "占位"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	result := cronBusinessResult{Type: "recommendations", Items: []json.RawMessage{raw}}
+	if validCronBusinessResult(result) {
+		t.Fatal("recommendations with only metadata-shaped items must be rejected")
+	}
+}
+
+// TestValidCronBusinessResultAcceptsPluralDetailsField 锁定推荐 Agent
+// 使用 "details"（复数）字段时仍能被 Go 解析为有效推荐条目。
+func TestValidCronBusinessResultAcceptsPluralDetailsField(t *testing.T) {
+	body := strings.Repeat("细节文本，描述业务影响和下一步建议。", 12)
+	raw, err := json.Marshal(map[string]any{
+		"title":   "Accell 破产影响德法 E-bike 经销商",
+		"why":     "德国子公司和法国 Lapierre 同步进入司法程序。",
+		"details": body,
+		"source":  "Bike Europe",
+		"type":    "经销商风险预警",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	result := cronBusinessResult{Type: "recommendations", Items: []json.RawMessage{raw}}
+	if !validCronBusinessResult(result) {
+		t.Fatal("recommendations with plural details field must be accepted")
+	}
+}
+
+// TestParseCronBusinessResultPicksLastBlockWhenFirstEmpty 锁定 Agent
+// 在多个 STA100_RESULT 块中先交占位空块、后交真实数据块时，Go 端应当
+// 拿到最后一个非空块，而不是永远停在第一个空块上。
+func TestParseCronBusinessResultPicksLastBlockWhenFirstEmpty(t *testing.T) {
+	body := strings.Repeat("细节文本，分析业务影响和下一步建议。", 12)
+	final := `[STA100_RESULT]{"type":"recommendations","items":[{"title":"Accell 破产影响德法 E-bike 经销商","detail":"` + body + `","source":"Bike Europe","type":"经销商风险预警"}]}[/STA100_RESULT]`
+	summary := "中间思考占位块：\n" +
+		`[STA100_RESULT]{"type":"recommendations","items":[]}[/STA100_RESULT]` + "\n" +
+		"经过检索，下面给出最终结果：\n" + final
+	result, ok := parseCronBusinessResult(summary)
+	if !ok {
+		t.Fatalf("expected last STA100_RESULT block to win, got %+v", result)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 item from last block, got %d", len(result.Items))
+	}
+}
+func TestParseCronMarkdownRecommendationsCarriesDetailField(t *testing.T) {
+	body := strings.Repeat("详情段：分析业务影响与下一步建议。", 8)
+	summary := "**1. Accell 破产影响德法 E-bike 经销商网络**\n\n" +
+		"**为什么推荐：** Accell 旗下品牌深度绑定欧洲零售门店。\n\n" +
+		"**详情：** " + body + "\n\n" +
+		"**来源：** Bike Europe ｜ **链接：** https://www.bike-eu.com/news\n"
+	result, ok := parseCronMarkdownBusinessResult("recommendations", summary)
+	if !ok {
+		t.Fatalf("markdown recommendations should be parseable, got %+v", result)
+	}
+	if len(result.Items) == 0 {
+		t.Fatal("markdown parser produced no items")
+	}
+	var item recommendationResultItem
+	if err := json.Unmarshal(result.Items[0], &item); err != nil {
+		t.Fatalf("unmarshal item: %v", err)
+	}
+	if item.Detail == "" {
+		t.Fatal("markdown item must carry detail field for downstream validation")
+	}
+	if len([]rune(item.Detail)) < 120 {
+		t.Fatalf("markdown item detail too short: %d runes", len([]rune(item.Detail)))
 	}
 }

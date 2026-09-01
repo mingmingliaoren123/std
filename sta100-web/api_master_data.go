@@ -151,6 +151,23 @@ func (a *businessAPI) accountItem(w http.ResponseWriter, r *http.Request, id str
 		if !allowMutation(w, r, http.MethodDelete) {
 			return
 		}
+		var delReq struct {
+			HardDelete bool `json:"hardDelete"`
+		}
+		if r.ContentLength > 0 || strings.TrimSpace(r.Header.Get("Content-Type")) != "" {
+			if err := decodeJSONBody(w, r, &delReq); err != nil {
+				return
+			}
+		}
+		if delReq.HardDelete {
+			if err := a.store.deleteRecord(r.Context(), "accounts", id); err != nil {
+				writeBusinessError(w, err)
+				return
+			}
+			a.store.audit(r.Context(), "delete", "account", id, requestOperator(r), nil)
+			writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
+			return
+		}
 		item.Archived, item.Updated = true, currentText()
 		if err := a.store.put(r.Context(), "accounts", id, item); err != nil {
 			writeBusinessError(w, err)
@@ -605,6 +622,10 @@ func (a *businessAPI) suppliersRouter(w http.ResponseWriter, r *http.Request, pa
 		a.suppliersExport(w, r)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "communications" {
+		a.supplierCommunications(w, r, parts[0])
+		return
+	}
 	a.supplierItem(w, r, parts[0])
 }
 
@@ -720,4 +741,457 @@ func (a *businessAPI) supplierItem(w http.ResponseWriter, r *http.Request, id st
 		w.Header().Set("Allow", "GET, PATCH, DELETE")
 		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "请求方法不受支持")
 	}
+}
+
+// leadsRouter 线索路由
+func (a *businessAPI) leadsRouter(w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) == 0 || parts[0] == "" {
+		a.leadsCollection(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "communications" {
+		a.leadCommunications(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "convert" {
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		a.leadConvert(w, r, parts[0])
+		return
+	}
+	a.leadItem(w, r, parts[0])
+}
+
+func (a *businessAPI) leadsCollection(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		items, err := a.listLeads(r.Context())
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+		leadType := strings.TrimSpace(r.URL.Query().Get("type"))
+		country := strings.TrimSpace(r.URL.Query().Get("country"))
+		status := strings.TrimSpace(r.URL.Query().Get("status"))
+		includeArchived := r.URL.Query().Get("include_archived") == "true"
+		filtered := make([]Lead, 0, len(items))
+		for _, item := range items {
+			if item.Archived && !includeArchived {
+				continue
+			}
+			if query != "" && !containsFold(item.ID+" "+item.Name+" "+item.Contact+" "+item.Email+" "+item.Phone+" "+item.Country, query) {
+				continue
+			}
+			if leadType != "" && leadType != "all" && item.Type != leadType {
+				continue
+			}
+			if country != "" && country != "all" && item.Country != country {
+				continue
+			}
+			if status != "" && status != "all" {
+				if status == "converted" && !item.Converted {
+					continue
+				}
+				if (status == "pending" || status == "followup") && item.Converted {
+					continue
+				}
+			}
+			filtered = append(filtered, item)
+		}
+		sortLeads(filtered, r.URL.Query().Get("sort"), r.URL.Query().Get("direction"))
+		total := len(filtered)
+		writeJSON(w, http.StatusOK, map[string]any{"items": filterPage(filtered, r), "total": total})
+	case http.MethodPost:
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		var request Lead
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			return
+		}
+		request.ID = request.ID
+		if request.ID == "" {
+			id, err := a.store.nextSequence(r.Context(), "leads", "LEAD", 8)
+			if err != nil {
+				writeBusinessError(w, err)
+				return
+			}
+			request.ID = id
+		}
+		request.Name = strings.TrimSpace(request.Name)
+		if request.Name == "" {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_LEAD", "线索客户名称不能为空")
+			return
+		}
+		request.Type = strings.TrimSpace(request.Type)
+		request.Country = strings.TrimSpace(request.Country)
+		request.City = strings.TrimSpace(request.City)
+		request.Contact = strings.TrimSpace(request.Contact)
+		request.Phone = strings.TrimSpace(request.Phone)
+		request.Email = strings.TrimSpace(request.Email)
+		request.Website = strings.TrimSpace(request.Website)
+		request.Address = strings.TrimSpace(request.Address)
+		request.Business = strings.TrimSpace(request.Business)
+		request.Source = strings.TrimSpace(request.Source)
+		request.SourceUrl = strings.TrimSpace(request.SourceUrl)
+		request.Reason = strings.TrimSpace(request.Reason)
+		request.CreatedAt = timeNowUTC()
+		request.Updated = timeNowUTC()
+		if err := a.store.create(r.Context(), "leads", request.ID, request); err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		a.store.audit(r.Context(), "create", "lead", request.ID, requestOperator(r), map[string]any{"name": request.Name})
+		writeJSON(w, http.StatusCreated, request)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "请求方法不受支持")
+	}
+}
+
+func (a *businessAPI) listLeads(ctx context.Context) ([]Lead, error) {
+	return listRecords[Lead](ctx, a.store, "leads")
+}
+
+func sortLeads(items []Lead, field, direction string) {
+	desc := strings.ToLower(strings.TrimSpace(direction)) != "asc"
+	field = strings.ToLower(strings.TrimSpace(field))
+	if field == "" {
+		field = "updated"
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		less := false
+		switch field {
+		case "score":
+			less = items[i].Score < items[j].Score
+		case "created", "createdat", "created_at":
+			less = items[i].CreatedAt < items[j].CreatedAt
+		default:
+			less = items[i].Updated < items[j].Updated
+		}
+		if desc {
+			return !less
+		}
+		return less
+	})
+}
+
+func (a *businessAPI) leadItem(w http.ResponseWriter, r *http.Request, id string) {
+	var item Lead
+	if err := a.store.get(r.Context(), "leads", id, &item); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, item)
+	case http.MethodPatch:
+		if !allowMutation(w, r, http.MethodPatch) {
+			return
+		}
+		var request Lead
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			return
+		}
+		request.ID = id
+		request.Name = strings.TrimSpace(request.Name)
+		if request.Name == "" {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_LEAD", "线索客户名称不能为空")
+			return
+		}
+		request.Type = strings.TrimSpace(request.Type)
+		request.Country = strings.TrimSpace(request.Country)
+		request.City = strings.TrimSpace(request.City)
+		request.Contact = strings.TrimSpace(request.Contact)
+		request.Phone = strings.TrimSpace(request.Phone)
+		request.Email = strings.TrimSpace(request.Email)
+		request.Website = strings.TrimSpace(request.Website)
+		request.Address = strings.TrimSpace(request.Address)
+		request.Business = strings.TrimSpace(request.Business)
+		request.Source = strings.TrimSpace(request.Source)
+		request.SourceUrl = strings.TrimSpace(request.SourceUrl)
+		request.Reason = strings.TrimSpace(request.Reason)
+		request.Updated = timeNowUTC()
+		request.Converted = item.Converted
+		request.ConvertedAt = item.ConvertedAt
+		request.ConvertedID = item.ConvertedID
+		request.CreatedAt = item.CreatedAt
+		if err := a.store.put(r.Context(), "leads", id, request); err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		a.store.audit(r.Context(), "update", "lead", id, requestOperator(r), map[string]any{"name": request.Name})
+		writeJSON(w, http.StatusOK, request)
+	case http.MethodDelete:
+		if !allowMutation(w, r, http.MethodDelete) {
+			return
+		}
+		if err := a.store.deleteRecord(r.Context(), "leads", id); err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		a.store.audit(r.Context(), "delete", "lead", id, requestOperator(r), nil)
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "id": id})
+	default:
+		w.Header().Set("Allow", "GET, PATCH, DELETE")
+		writeAPIError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "请求方法不受支持")
+	}
+}
+
+func (a *businessAPI) leadConvert(w http.ResponseWriter, r *http.Request, leadID string) {
+	var lead Lead
+	if err := a.store.get(r.Context(), "leads", leadID, &lead); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	if lead.Converted {
+		writeAPIError(w, http.StatusConflict, "LEAD_ALREADY_CONVERTED", "该线索已转化为客户")
+		return
+	}
+	if lead.Archived {
+		writeAPIError(w, http.StatusConflict, "LEAD_ARCHIVED", "已归档的线索不能转化为客户")
+		return
+	}
+	var req struct {
+		KeepSource *bool `json:"keepSource"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if r.Body != nil {
+		_ = r.Body.Close()
+	}
+	keepSource := true
+	if req.KeepSource != nil {
+		keepSource = *req.KeepSource
+	}
+	customerID, err := a.store.nextSequence(r.Context(), "accounts", "ACC", 8)
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	customer := Customer{
+		ID:          customerID,
+		Name:        lead.Name,
+		Type:        lead.Type,
+		Country:     lead.Country,
+		City:        lead.City,
+		Contact:     lead.Contact,
+		Phone:       lead.Phone,
+		Email:       lead.Email,
+		Website:     lead.Website,
+		Source:      "应用发现线索",
+		Description: lead.Business,
+		Rating:      "Prospect",
+		Orders:      0,
+		Total:       "0",
+		Updated:     timeNowUTC(),
+		Archived:    false,
+	}
+	if err := a.store.create(r.Context(), "accounts", customerID, customer); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	if err := a.copyLeadCommunicationsToCustomer(r.Context(), leadID, customerID); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	if keepSource {
+		lead.Converted = true
+		lead.ConvertedAt = timeNowUTC()
+		lead.ConvertedID = customerID
+		lead.Updated = timeNowUTC()
+		if err := a.store.put(r.Context(), "leads", leadID, lead); err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+	} else {
+		if err := a.store.deleteRecord(r.Context(), "leads", leadID); err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+	}
+	a.store.audit(r.Context(), "convert", "lead->customer", leadID, requestOperator(r), map[string]any{"leadId": leadID, "customerId": customerID, "keepSource": keepSource})
+	writeJSON(w, http.StatusCreated, map[string]any{"lead": lead, "customer": customer, "keepSource": keepSource})
+}
+
+func (a *businessAPI) leadCommunications(w http.ResponseWriter, r *http.Request, leadID string) {
+	var lead Lead
+	if err := a.store.get(r.Context(), "leads", leadID, &lead); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		items, err := a.listLeadCommunications(r.Context(), leadID)
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		listResponse(w, items)
+	case http.MethodPost:
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		var request LeadCommunication
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			return
+		}
+		request.Type = strings.TrimSpace(request.Type)
+		request.Subject = strings.TrimSpace(request.Subject)
+		request.Content = strings.TrimSpace(request.Content)
+		request.Contact = strings.TrimSpace(request.Contact)
+		request.OccurredAt = strings.TrimSpace(request.OccurredAt)
+		if request.Type == "" || request.Content == "" || request.OccurredAt == "" {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_COMMUNICATION", "沟通方式、沟通时间和沟通内容不能为空")
+			return
+		}
+		if len([]rune(request.Subject)) > 200 || len([]rune(request.Content)) > 10000 || len([]rune(request.Contact)) > 200 {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_COMMUNICATION", "沟通记录字段超过长度限制")
+			return
+		}
+		id, err := a.store.nextSequence(r.Context(), "lead_communications", "COMM", 8)
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		request.ID = id
+		request.LeadID = leadID
+		request.CreatedAt = timeNowUTC()
+		request.CreatedBy = requestOperator(r)
+		if err := a.store.create(r.Context(), "lead_communications", id, request); err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		a.store.audit(r.Context(), "append", "lead_communication", id, request.CreatedBy, map[string]any{"leadId": leadID, "type": request.Type, "occurredAt": request.OccurredAt})
+		writeJSON(w, http.StatusCreated, request)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		writeAPIError(w, http.StatusMethodNotAllowed, "COMMUNICATION_IMMUTABLE", "历史沟通记录只能追加，不能修改或删除")
+	}
+}
+
+func (a *businessAPI) listLeadCommunications(ctx context.Context, leadID string) ([]LeadCommunication, error) {
+	items, err := listRecords[LeadCommunication](ctx, a.store, "lead_communications")
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]LeadCommunication, 0)
+	for _, item := range items {
+		if item.LeadID == leadID {
+			filtered = append(filtered, item)
+		}
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].OccurredAt == filtered[j].OccurredAt {
+			return filtered[i].CreatedAt > filtered[j].CreatedAt
+		}
+		return filtered[i].OccurredAt > filtered[j].OccurredAt
+	})
+	return filtered, nil
+}
+
+func (a *businessAPI) copyLeadCommunicationsToCustomer(ctx context.Context, leadID, customerID string) error {
+	items, err := a.listLeadCommunications(ctx, leadID)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		id, err := a.store.nextSequence(ctx, "customer_communications", "COMM", 8)
+		if err != nil {
+			return err
+		}
+		copy := CustomerCommunication{
+			ID:         id,
+			CustomerID: customerID,
+			Type:       item.Type,
+			Subject:    item.Subject,
+			Content:    item.Content,
+			Contact:    item.Contact,
+			OccurredAt: item.OccurredAt,
+			CreatedAt:  item.CreatedAt,
+			CreatedBy:  item.CreatedBy,
+		}
+		if err := a.store.create(ctx, "customer_communications", id, copy); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// supplierCommunications 供应商跟进记录
+func (a *businessAPI) supplierCommunications(w http.ResponseWriter, r *http.Request, supplierID string) {
+	var supplier Supplier
+	if err := a.store.get(r.Context(), "suppliers", supplierID, &supplier); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		items, err := a.listSupplierCommunications(r.Context(), supplierID)
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		listResponse(w, items)
+	case http.MethodPost:
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		var request SupplierCommunication
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			return
+		}
+		request.Type = strings.TrimSpace(request.Type)
+		request.Subject = strings.TrimSpace(request.Subject)
+		request.Content = strings.TrimSpace(request.Content)
+		request.Contact = strings.TrimSpace(request.Contact)
+		request.OccurredAt = strings.TrimSpace(request.OccurredAt)
+		if request.Type == "" || request.Content == "" || request.OccurredAt == "" {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_COMMUNICATION", "沟通方式、沟通时间和沟通内容不能为空")
+			return
+		}
+		if len([]rune(request.Subject)) > 200 || len([]rune(request.Content)) > 10000 || len([]rune(request.Contact)) > 200 {
+			writeAPIError(w, http.StatusBadRequest, "INVALID_COMMUNICATION", "沟通记录字段超过长度限制")
+			return
+		}
+		id, err := a.store.nextSequence(r.Context(), "supplier_communications", "SPC", 8)
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		request.ID = id
+		request.SupplierID = supplierID
+		request.CreatedAt = timeNowUTC()
+		request.CreatedBy = requestOperator(r)
+		if err := a.store.create(r.Context(), "supplier_communications", id, request); err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		a.store.audit(r.Context(), "append", "supplier_communication", id, request.CreatedBy, map[string]any{"supplierId": supplierID, "type": request.Type, "occurredAt": request.OccurredAt})
+		writeJSON(w, http.StatusCreated, request)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		writeAPIError(w, http.StatusMethodNotAllowed, "COMMUNICATION_IMMUTABLE", "历史沟通记录只能追加，不能修改或删除")
+	}
+}
+
+func (a *businessAPI) listSupplierCommunications(ctx context.Context, supplierID string) ([]SupplierCommunication, error) {
+	items, err := listRecords[SupplierCommunication](ctx, a.store, "supplier_communications")
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]SupplierCommunication, 0)
+	for _, item := range items {
+		if item.SupplierID == supplierID {
+			filtered = append(filtered, item)
+		}
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].OccurredAt == filtered[j].OccurredAt {
+			return filtered[i].CreatedAt > filtered[j].CreatedAt
+		}
+		return filtered[i].OccurredAt > filtered[j].OccurredAt
+	})
+	return filtered, nil
 }

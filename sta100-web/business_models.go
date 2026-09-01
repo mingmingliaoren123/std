@@ -41,21 +41,71 @@ type CustomerCommunication struct {
 	CreatedBy  string `json:"createdBy"`
 }
 
+type SupplierCommunication struct {
+	ID         string `json:"id"`
+	SupplierID string `json:"supplierId"`
+	Type       string `json:"type"`
+	Subject    string `json:"subject"`
+	Content    string `json:"content"`
+	Contact    string `json:"contact,omitempty"`
+	OccurredAt string `json:"occurredAt"`
+	CreatedAt  string `json:"createdAt"`
+	CreatedBy  string `json:"createdBy"`
+}
+
+type LeadCommunication struct {
+	ID         string `json:"id"`
+	LeadID     string `json:"leadId"`
+	Type       string `json:"type"`
+	Subject    string `json:"subject"`
+	Content    string `json:"content"`
+	Contact    string `json:"contact,omitempty"`
+	OccurredAt string `json:"occurredAt"`
+	CreatedAt  string `json:"createdAt"`
+	CreatedBy  string `json:"createdBy"`
+}
+
+type Lead struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Country     string `json:"country"`
+	City        string `json:"city,omitempty"`
+	Contact     string `json:"contact,omitempty"`
+	Phone       string `json:"phone,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Website     string `json:"website,omitempty"`
+	Address     string `json:"address,omitempty"`
+	Business    string `json:"business,omitempty"`
+	Source      string `json:"source,omitempty"`
+	SourceUrl   string `json:"sourceUrl,omitempty"`
+	Score       int    `json:"score,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Converted   bool   `json:"converted,omitempty"`
+	ConvertedAt string `json:"convertedAt,omitempty"`
+	ConvertedID string `json:"convertedId,omitempty"`
+	CreatedAt   string `json:"createdAt"`
+	Updated     string `json:"updated"`
+	Archived    bool   `json:"archived,omitempty"`
+}
+
 type Quote struct {
-	ID       string         `json:"id"`
-	Subject  string         `json:"subject"`
-	Customer string         `json:"customer"`
-	Value    string         `json:"value"`
-	Valid    string         `json:"valid"`
-	Status   string         `json:"status"`
-	Products string         `json:"products"`
-	Owner    string         `json:"owner,omitempty"`
-	Currency string         `json:"currency,omitempty"`
-	Freight  float64        `json:"freight,omitempty"`
-	Tax      float64        `json:"tax,omitempty"`
-	Terms    string         `json:"terms,omitempty"`
-	Lines    []BusinessLine `json:"lines"`
-	Updated  string         `json:"updated"`
+	ID             string            `json:"id"`
+	Subject        string            `json:"subject"`
+	Customer       string            `json:"customer"`
+	Value          string            `json:"value"`
+	Valid          string            `json:"valid"`
+	Status         string            `json:"status"`
+	Products       string            `json:"products"`
+	Owner          string            `json:"owner,omitempty"`
+	Currency       string            `json:"currency,omitempty"`
+	Freight        float64           `json:"freight,omitempty"`
+	Tax            float64           `json:"tax,omitempty"`
+	Terms          string            `json:"terms,omitempty"`
+	TemplateID     string            `json:"templateId,omitempty"`
+	TemplateFields map[string]string `json:"templateFields,omitempty"`
+	Lines          []BusinessLine    `json:"lines"`
+	Updated        string            `json:"updated"`
 }
 
 type Order struct {
@@ -85,6 +135,48 @@ type Document struct {
 	Value    string         `json:"value,omitempty"`
 	Lines    []BusinessLine `json:"lines"`
 	Updated  string         `json:"updated"`
+}
+
+type BusinessTemplate struct {
+	ID              string             `json:"id"`
+	Kind            string             `json:"kind"`
+	DocumentType    string             `json:"documentType,omitempty"`
+	Name            string             `json:"name"`
+	Version         string             `json:"version"`
+	Source          string             `json:"source"`
+	Mode            string             `json:"mode"`
+	FileName        string             `json:"fileName"`
+	Mime            string             `json:"mime,omitempty"`
+	Size            string             `json:"size"`
+	Bytes           int64              `json:"bytes,omitempty"`
+	SHA256          string             `json:"sha256,omitempty"`
+	Path            string             `json:"-"`
+	StorageFileName string             `json:"storageFileName,omitempty"`
+	Status          string             `json:"status"`
+	Default         bool               `json:"default,omitempty"`
+	OutputFormat    string             `json:"outputFormat"`
+	DefaultValues   map[string]string  `json:"defaultValues,omitempty"`
+	FieldMapping    map[string]string  `json:"fieldMapping,omitempty"`
+	PDFFields       []PDFTemplateField `json:"pdfFields,omitempty"`
+	PDFFormFields   []string           `json:"pdfFormFields,omitempty"`
+	Placeholders    []string           `json:"placeholders,omitempty"`
+	RecognitionNote string             `json:"recognitionNote,omitempty"`
+	CreatedAt       string             `json:"createdAt"`
+	Updated         string             `json:"updated"`
+}
+
+type PDFTemplateField struct {
+	Key             string  `json:"key"`
+	Label           string  `json:"label,omitempty"`
+	Page            int     `json:"page,omitempty"`
+	X               float64 `json:"x"`
+	Y               float64 `json:"y"`
+	FontSize        float64 `json:"fontSize,omitempty"`
+	MaxWidth        float64 `json:"maxWidth,omitempty"`
+	Align           string  `json:"align,omitempty"`
+	Color           string  `json:"color,omitempty"`
+	BackgroundColor string  `json:"backgroundColor,omitempty"`
+	Multi           bool    `json:"multi,omitempty"`
 }
 
 type Product struct {
@@ -146,6 +238,32 @@ type AgentMessageRecord struct {
 	Model           string                   `json:"model,omitempty"`
 	Provider        string                   `json:"provider,omitempty"`
 	CreatedAt       string                   `json:"createdAt"`
+}
+
+type AgentMemory struct {
+	ID              string  `json:"id"`
+	AgentID         string  `json:"agentId"`
+	SessionKey      string  `json:"sessionKey"`
+	Kind            string  `json:"kind"`
+	Key             string  `json:"key"`
+	Value           string  `json:"value"`
+	Confidence      float64 `json:"confidence,omitempty"`
+	SourceMessageID string  `json:"sourceMessageId,omitempty"`
+	UpdatedAt       string  `json:"updatedAt"`
+}
+
+type AgentKnowledgeItem struct {
+	ID              string   `json:"id"`
+	AgentID         string   `json:"agentId"`
+	SourceID        string   `json:"sourceId"`
+	SourceName      string   `json:"sourceName"`
+	SourceKind      string   `json:"sourceKind"`
+	Category        string   `json:"category"`
+	Tags            []string `json:"tags,omitempty"`
+	Content         string   `json:"content"`
+	SourceUpdatedAt string   `json:"sourceUpdatedAt,omitempty"`
+	SyncedAt        string   `json:"syncedAt"`
+	Status          string   `json:"status"`
 }
 
 type NewsItem struct {
@@ -238,6 +356,9 @@ type UserPreferences struct {
 	NewsCountries           string              `json:"newsCountries"`
 	NewsTopics              string              `json:"newsTopics"`
 	NewsSources             string              `json:"newsSources"`
+	NewsMediaCategories     []string            `json:"newsMediaCategories"`
+	NewsMediaIDs            []string            `json:"newsMediaIds"`
+	NewsCustomSources       string              `json:"newsCustomSources"`
 	AgentAllowlists         map[string][]string `json:"agentAllowlists"`
 	AgentModelOverrides     map[string]string   `json:"agentModelOverrides"`
 }

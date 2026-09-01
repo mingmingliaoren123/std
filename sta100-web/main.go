@@ -76,6 +76,9 @@ func main() {
 	protectedAPI.HandleFunc("/api/v1/agents/chat", openClaw.chatHandler)
 	protectedAPI.HandleFunc("/api/v1/auth/account", auth.accountHandler)
 	protectedAPI.Handle("/api/v1/", business)
+	// OpenClaw's bundled channel hook authenticates with the local channel token,
+	// so it must not require a browser session cookie.
+	mux.HandleFunc("/api/v1/openclaw/inbound/", business.channelSkillInboundHandler)
 	mux.Handle("/api/v1/", auth.requireSession(protectedAPI))
 	mux.Handle("/", staticFiles)
 
@@ -240,6 +243,25 @@ func (s *openClawService) channelsHandler(w http.ResponseWriter, r *http.Request
 
 func (s *openClawService) channelHandler(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/openclaw/channels/"), "/"), "/")
+	if len(parts) == 2 && parts[1] == "message" {
+		if !allowMutation(w, r, http.MethodPost) {
+			return
+		}
+		var request orchestrator.ChannelMessageInput
+		if err := decodeJSONBody(w, r, &request); err != nil {
+			return
+		}
+		request.Channel = parts[0]
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		result, err := s.service.SendChannelMessage(ctx, request)
+		if err != nil {
+			writeOpenClawError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "install" {
 		if !allowMutation(w, r, http.MethodPost) {
 			return
@@ -299,7 +321,7 @@ func (s *openClawService) channelHandler(w http.ResponseWriter, r *http.Request)
 		if !allowMethod(w, r, http.MethodGet) {
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 100*time.Second)
 		defer cancel()
 		result, err := s.service.PollFeishuQR(ctx, parts[0], parts[2])
 		if err != nil {
@@ -390,6 +412,8 @@ func normalizeChannelStatusResponse(channel string, raw map[string]any) map[stri
 	accounts := make([]map[string]any, 0)
 	accountConnected := false
 	accountError := ""
+	lastInboundAt := ""
+	lastOutboundAt := ""
 	if channelAccounts, ok := raw["channelAccounts"].(map[string]any); ok {
 		if values, ok := channelAccounts[channel].([]any); ok {
 			for _, value := range values {
@@ -401,8 +425,11 @@ func normalizeChannelStatusResponse(channel string, raw map[string]any) map[stri
 				accountIsConnected, _ := account["connected"].(bool)
 				accountConfigured, _ := account["configured"].(bool)
 				accountLastError, _ := account["lastError"].(string)
+				accountLastInboundAt, _ := account["lastInboundAt"].(string)
+				accountLastOutboundAt, _ := account["lastOutboundAt"].(string)
+				normalizedAccountError := normalizeChannelLastError(accountLastError)
 				switch {
-				case strings.TrimSpace(accountLastError) != "":
+				case normalizedAccountError != "":
 					accountLabel = "异常"
 				case accountIsConnected:
 					accountLabel = "已连接"
@@ -410,19 +437,27 @@ func normalizeChannelStatusResponse(channel string, raw map[string]any) map[stri
 				case accountConfigured:
 					accountLabel = "已配置"
 				}
-				if strings.TrimSpace(accountLastError) != "" && accountLastError != "not configured" && accountLastError != "not connected" {
+				if normalizedAccountError != "" {
 					if accountError == "" {
-						accountError = accountLastError
+						accountError = normalizedAccountError
 					}
+				}
+				if lastInboundAt == "" {
+					lastInboundAt = strings.TrimSpace(accountLastInboundAt)
+				}
+				if lastOutboundAt == "" {
+					lastOutboundAt = strings.TrimSpace(accountLastOutboundAt)
 				}
 				accounts = append(accounts, map[string]any{
 					"accountId": account["accountId"], "label": accountLabel,
 					"configured": accountConfigured, "connected": accountIsConnected,
-					"lastError": strings.TrimSpace(accountLastError),
+					"lastError": normalizedAccountError, "lastInboundAt": accountLastInboundAt,
+					"lastOutboundAt": accountLastOutboundAt,
 				})
 			}
 		}
 	}
+	lastError = normalizeChannelLastError(lastError)
 	if strings.TrimSpace(lastError) == "" {
 		lastError = accountError
 	}
@@ -441,6 +476,9 @@ func normalizeChannelStatusResponse(channel string, raw map[string]any) map[stri
 	case connected || accountConnected:
 		label = "已连接"
 		message = "通道账号已配置，并已确认与服务建立连接。"
+		if channel == "feishu" && lastInboundAt == "" {
+			message = "飞书已连接，尚未收到手机端消息。请在飞书开发者后台启用长连接事件订阅、订阅 im.message.receive_v1 并发布应用，然后向机器人私聊发送测试消息。"
+		}
 	case running:
 		label = "运行中"
 		message = "通道正在运行，但 OpenClaw 尚未返回已连接状态。"
@@ -449,17 +487,35 @@ func normalizeChannelStatusResponse(channel string, raw map[string]any) map[stri
 		message = "通道账号已写入 OpenClaw，但当前尚未确认连接。"
 	}
 	return map[string]any{
-		"channel":    channel,
-		"label":      label,
-		"message":    message,
-		"queryState": queryStateOrOK(queryState),
-		"configured": configured,
-		"running":    running,
-		"connected":  connected || accountConnected,
-		"lastError":  strings.TrimSpace(lastError),
-		"accounts":   accounts,
-		"checkedAt":  time.Now().Format(time.RFC3339),
+		"channel":        channel,
+		"label":          label,
+		"message":        message,
+		"queryState":     queryStateOrOK(queryState),
+		"configured":     configured,
+		"running":        running,
+		"connected":      connected || accountConnected,
+		"lastError":      strings.TrimSpace(lastError),
+		"lastInboundAt":  lastInboundAt,
+		"lastOutboundAt": lastOutboundAt,
+		"accounts":       accounts,
+		"checkedAt":      time.Now().Format(time.RFC3339),
 	}
+}
+
+func normalizeChannelLastError(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return ""
+	}
+	lower := strings.ToLower(text)
+	switch lower {
+	case "not configured", "not configure", "not connected":
+		return ""
+	}
+	if strings.Contains(lower, "not configured") || strings.Contains(lower, "not configure") {
+		return ""
+	}
+	return text
 }
 
 func firstNonEmptyString(values ...string) string {

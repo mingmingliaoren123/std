@@ -74,6 +74,8 @@ type CronRun struct {
 	Cause          string `json:"cause,omitempty"`
 	Provider       string `json:"provider,omitempty"`
 	Model          string `json:"model,omitempty"`
+	SessionID      string `json:"sessionId,omitempty"`
+	SessionKey     string `json:"sessionKey,omitempty"`
 	StartedAtMs    int64  `json:"startedAtMs,omitempty"`
 	EndedAtMs      int64  `json:"endedAtMs,omitempty"`
 	RunAtMs        int64  `json:"runAtMs,omitempty"`

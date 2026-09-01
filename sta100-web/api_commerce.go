@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -164,11 +166,25 @@ func (a *businessAPI) quoteDeliver(w http.ResponseWriter, r *http.Request, id st
 		writeBusinessError(w, err)
 		return
 	}
-	if item.Status != "Draft" {
-		writeAPIError(w, http.StatusConflict, "QUOTE_STATUS_INVALID", "只有草稿报价可以发送")
+	var request EmailSendRequest
+	if err := decodeJSONBody(w, r, &request); err != nil {
 		return
 	}
-	writeTODO(w, "TODO_QUOTE_DELIVERY", "报价发送需要正式模板、PDF 规则、邮件样式和发件通道，当前不会仅修改状态冒充发送成功", []string{"报价模板", "PDF 版式", "邮件主题和正文", "发件账户", "收件人规则", "发送失败重试规则"})
+	if request.Subject == "" || request.Body == "" {
+		writeAPIError(w, http.StatusBadRequest, "EMAIL_CONTENT_REQUIRED", "请填写邮件主题和正文")
+		return
+	}
+	if err := a.sendQuoteEmail(r.Context(), item, request); err != nil {
+		writeAPIError(w, http.StatusBadGateway, "QUOTE_EMAIL_FAILED", err.Error())
+		return
+	}
+	if item.Status == "Draft" {
+		item.Status = "Delivered"
+		item.Updated = currentText()
+		_ = a.store.put(r.Context(), "quotes", item.ID, item)
+	}
+	a.store.audit(r.Context(), "email", "quote", item.ID, requestOperator(r), map[string]any{"to": request.To, "attachment": request.AttachRecord})
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true, "quote": item, "message": "报价单邮件已通过 SMTP 发送"})
 }
 
 func (a *businessAPI) quoteConvertOrder(w http.ResponseWriter, r *http.Request, id string) {
@@ -223,7 +239,27 @@ func (a *businessAPI) quoteDownload(w http.ResponseWriter, r *http.Request, id s
 		writeBusinessError(w, err)
 		return
 	}
-	writeTODO(w, "TODO_QUOTE_PDF", "报价 PDF 需在客户确认正式模板、纸张、语言和签章规则后生成", []string{"报价模板", "纸张尺寸", "语言", "Logo 和签章", "文件命名规则"})
+	tpl, err := a.templateForQuote(r.Context(), item)
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	if isStratronixQuotePDFTemplate(tpl) {
+		values := a.quoteTemplateValues(r.Context(), item, tpl)
+		content, filename, err := renderDynamicQuotePDF(item, values, "报价单-"+item.ID)
+		if err != nil {
+			writeBusinessError(w, err)
+			return
+		}
+		writeAttachment(w, filename, "application/pdf", content)
+		return
+	}
+	content, filename, contentType, err := a.renderBusinessTemplate(r.Context(), tpl, a.quoteTemplateValues(r.Context(), item, tpl), "报价单-"+item.ID)
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	writeAttachment(w, filename, contentType, content)
 }
 
 func (a *businessAPI) prepareQuote(ctx context.Context, item *Quote) string {
@@ -247,7 +283,7 @@ func (a *businessAPI) prepareQuote(ctx context.Context, item *Quote) string {
 		return message
 	}
 	item.Lines = lines
-	total += item.Freight + item.Tax
+	total += item.Freight
 	item.Value, item.Products = formatMoney(total, item.Currency), lineSummary(lines)
 	return ""
 }
@@ -261,7 +297,42 @@ func (a *businessAPI) ordersRouter(w http.ResponseWriter, r *http.Request, parts
 		a.orderDocuments(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "deliver" {
+		a.orderDeliver(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "download" {
+		a.orderDownload(w, r, parts[0])
+		return
+	}
 	a.orderItem(w, r, parts[0])
+}
+
+func (a *businessAPI) orderDeliver(w http.ResponseWriter, r *http.Request, id string) {
+	if !allowMutation(w, r, http.MethodPost) {
+		return
+	}
+	var item Order
+	if err := a.store.get(r.Context(), "orders", id, &item); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	var request EmailSendRequest
+	if err := decodeJSONBody(w, r, &request); err != nil {
+		return
+	}
+	if request.Subject == "" || request.Body == "" {
+		writeAPIError(w, http.StatusBadRequest, "EMAIL_CONTENT_REQUIRED", "请填写邮件主题和正文")
+		return
+	}
+	if err := a.sendOrderEmail(r.Context(), item, request); err != nil {
+		writeAPIError(w, http.StatusBadGateway, "ORDER_EMAIL_FAILED", err.Error())
+		return
+	}
+	item.Updated = currentText()
+	_ = a.store.put(r.Context(), "orders", item.ID, item)
+	a.store.audit(r.Context(), "email", "order", item.ID, requestOperator(r), map[string]any{"to": request.To, "documents": request.DocumentIDs})
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true, "order": item, "message": "订单邮件已通过 SMTP 发送"})
 }
 
 func (a *businessAPI) ordersCollection(w http.ResponseWriter, r *http.Request) {
@@ -440,11 +511,11 @@ func (a *businessAPI) orderDocuments(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if len(request.Types) == 0 {
-		request.Types = []string{"PI", "CI", "PL", "报关单"}
+		request.Types = []string{"PI", "CI", "PL", "报关单", "合同"}
 	}
 	for _, documentType := range request.Types {
 		if !validDocumentType(documentType) {
-			writeAPIError(w, http.StatusBadRequest, "INVALID_DOCUMENT_TYPE", "单据类型仅支持 PI、CI、PL、报关单")
+			writeAPIError(w, http.StatusBadRequest, "INVALID_DOCUMENT_TYPE", "单据类型仅支持 PI、CI、PL、报关单、合同")
 			return
 		}
 	}
@@ -468,6 +539,24 @@ func (a *businessAPI) orderDocuments(w http.ResponseWriter, r *http.Request, id 
 	}
 	a.store.audit(r.Context(), "generate_documents", "order", id, requestOperator(r), map[string]any{"count": len(created)})
 	writeJSON(w, http.StatusCreated, map[string]any{"items": created, "total": len(created)})
+}
+
+func (a *businessAPI) orderDownload(w http.ResponseWriter, r *http.Request, id string) {
+	if !allowMethod(w, r, http.MethodGet) {
+		return
+	}
+	var item Order
+	if err := a.store.get(r.Context(), "orders", id, &item); err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	tpl := builtInTemplate("order")
+	content, filename, contentType, err := a.renderBusinessTemplate(r.Context(), tpl, orderTemplateValues(item), "订单-"+item.ID)
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	writeAttachment(w, filename, contentType, content)
 }
 
 func (a *businessAPI) documentsRouter(w http.ResponseWriter, r *http.Request, parts []string) {
@@ -563,7 +652,7 @@ func (a *businessAPI) documentItem(w http.ResponseWriter, r *http.Request, id st
 		request.Status = firstNonEmpty(request.Status, item.Status)
 		request.ID, request.Customer, request.Value, request.Lines, request.Updated = id, item.Customer, item.Value, item.Lines, currentText()
 		if !validDocumentType(request.Type) {
-			writeAPIError(w, http.StatusBadRequest, "INVALID_DOCUMENT_TYPE", "单据类型仅支持 PI、CI、PL、报关单")
+			writeAPIError(w, http.StatusBadRequest, "INVALID_DOCUMENT_TYPE", "单据类型仅支持 PI、CI、PL、报关单、合同")
 			return
 		}
 		if !validDocumentStatus(request.Status) {
@@ -598,7 +687,7 @@ func (a *businessAPI) documentItem(w http.ResponseWriter, r *http.Request, id st
 
 func (a *businessAPI) createDocumentFromOrder(ctx context.Context, orderID, documentType, template, language string) (Document, error) {
 	if !validDocumentType(documentType) {
-		return Document{}, errors.New("单据类型仅支持 PI、CI、PL、报关单")
+		return Document{}, errors.New("单据类型仅支持 PI、CI、PL、报关单、合同")
 	}
 	var order Order
 	if err := a.store.get(ctx, "orders", orderID, &order); err != nil {
@@ -613,6 +702,8 @@ func (a *businessAPI) createDocumentFromOrder(ctx context.Context, orderID, docu
 	prefix := documentType
 	if documentType == "报关单" {
 		prefix = "CD"
+	} else if documentType == "合同" {
+		prefix = "CT"
 	}
 	id, err := a.store.nextSequence(ctx, "documents", prefix+"-"+time.Now().Format("20060102"), 3)
 	if err != nil {
@@ -634,7 +725,280 @@ func (a *businessAPI) documentDownload(w http.ResponseWriter, r *http.Request, i
 		writeBusinessError(w, err)
 		return
 	}
-	writeTODO(w, "TODO_DOCUMENT_EXPORT", "正式单据文件需在对应模板、字段映射和输出格式确认后生成", []string{"PI/CI/PL/报关单模板", "字段映射", "输出格式", "语言", "签章规则", "文件命名规则"})
+	tpl, err := a.templateForDocument(r.Context(), item)
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	format, err := normalizeDocumentDownloadFormat(r.URL.Query().Get("format"), item.Type)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "INVALID_DOCUMENT_FORMAT", err.Error())
+		return
+	}
+	values := a.documentTemplateValues(r.Context(), item, tpl)
+	content, filename, contentType, err := a.renderDocumentDownload(r.Context(), item, tpl, values, format)
+	if err != nil {
+		if errors.Is(err, errOfficeConverterMissing) {
+			writeAPIError(w, http.StatusServiceUnavailable, "DOCUMENT_CONVERTER_MISSING", "当前环境未安装 LibreOffice/soffice，无法按原模板导出该格式")
+			return
+		}
+		writeBusinessError(w, err)
+		return
+	}
+	writeAttachment(w, filename, contentType, content)
+}
+
+func (a *businessAPI) quoteTemplateValues(ctx context.Context, item Quote, tpl BusinessTemplate) map[string]string {
+	subtotal := lineAmountTotal(item.Lines)
+	total := quoteTemplateTotal(item)
+	values := map[string]string{
+		"company.name":  "STRATRONIX",
+		"customer.name": item.Customer,
+		"record.id":     item.ID,
+		"record.date":   time.Now().Format("2006-01-02"),
+		"record.total":  item.Value,
+		"record.lines":  businessLinesHTML(item.Lines),
+		"quote.subject": item.Subject,
+		"quote.valid":   item.Valid,
+		"quote.terms":   item.Terms,
+	}
+	if item.Currency == "" {
+		values["quote.currency"] = currencyFromMoney(item.Value)
+	} else {
+		values["quote.currency"] = item.Currency
+	}
+	values["record.total"] = formatMoney(total, values["quote.currency"])
+	for key, value := range mergeTemplateDefaultValues(tpl.DefaultValues, defaultQuoteTemplateValues()) {
+		values[key] = value
+	}
+	values["record.subtotal"] = formatMoney(subtotal, values["quote.currency"])
+	values["record.freight"] = formatMoney(item.Freight, values["quote.currency"])
+	values["record.tax"] = formatMoney(item.Tax, values["quote.currency"])
+	for key, value := range item.TemplateFields {
+		if strings.TrimSpace(key) != "" {
+			values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	values["quote.paymentTerms"] = firstNonEmpty(values["quote.paymentTerms"], item.Terms)
+	if customer, ok := a.customerByName(ctx, item.Customer); ok {
+		values["customer.country"] = firstNonEmpty(values["customer.country"], customer.Country)
+		values["customer.city"] = firstNonEmpty(values["customer.city"], customer.City)
+		values["customer.contact"] = firstNonEmpty(values["customer.contact"], customer.Contact)
+		values["customer.phone"] = firstNonEmpty(values["customer.phone"], customer.Phone)
+		values["customer.email"] = firstNonEmpty(values["customer.email"], customer.Email)
+		values["customer.website"] = firstNonEmpty(values["customer.website"], customer.Website)
+		values["customer.address"] = firstNonEmpty(values["customer.address"], customer.Description)
+	}
+	if strings.TrimSpace(item.Terms) != "" && strings.TrimSpace(item.TemplateFields["quote.paymentTerms"]) == "" {
+		values["quote.paymentTerms"] = item.Terms
+	}
+	values["quote.validity"] = firstNonEmpty(values["quote.validity"], quoteValidityText(item.Valid))
+	values["quote.validityDetail"] = quoteValidityDetail(values["quote.validityDays"], item.Valid)
+	values["pdf.record.id"] = stratronixQuoteNumber(item.ID)
+	values["pdf.quote.paymentTerms"] = compactPDFText(values["quote.paymentTerms"], 42)
+	values["pdf.record.subtotal"] = formatPDFMoney(subtotal)
+	values["pdf.record.freight"] = formatPDFMoney(item.Freight)
+	values["pdf.record.total"] = formatPDFMoney(total)
+	values["pdf.quote.priceTermsLine"] = "价格条件 / Price Terms: " + values["quote.priceTerms"]
+	values["pdf.quote.paymentTermsLine"] = "付款条件 / Payment: " + values["quote.paymentTerms"]
+	values["pdf.quote.leadTimeLine"] = "交期 / Lead Time: " + values["quote.leadTime"]
+	values["pdf.quote.warrantyLine"] = "质保 / Warranty: " + values["quote.warranty"]
+	values["pdf.quote.certificationLine"] = "认证 / Certification: " + values["quote.certification"]
+	values["pdf.quote.packagingLine"] = "包装 / Packaging: " + values["quote.packaging"]
+	values["pdf.quote.validityDetailLine"] = "报价有效期 / Validity: " + values["quote.validityDetail"]
+	values["pdf.quote.noteLine"] = "备注 / Note: " + values["quote.note"]
+	values["pdf.customer.contact"] = compactPDFContact(values["customer.contact"])
+	values["pdf.customer.address"] = compactPDFText(values["customer.address"], 34)
+	for i, line := range item.Lines {
+		index := i + 1
+		prefix := fmt.Sprintf("line.%d.", index)
+		values[prefix+"no"] = strconv.Itoa(index)
+		values[prefix+"model"] = firstNonEmpty(line.ProductID, line.ProductName)
+		values[prefix+"description"] = firstNonEmpty(line.ProductName, line.ProductID)
+		values[prefix+"quantity"] = cleanQuantity(line.Quantity)
+		values[prefix+"unitPrice"] = formatMoney(line.UnitPrice, values["quote.currency"])
+		values[prefix+"amount"] = formatMoney(line.Amount, values["quote.currency"])
+		values["pdf."+prefix+"unitPrice"] = formatPDFMoney(line.UnitPrice)
+		values["pdf."+prefix+"amount"] = formatPDFMoney(line.Amount)
+	}
+	return values
+}
+
+func quoteTemplateTotal(item Quote) float64 {
+	if len(item.Lines) == 0 && item.Freight == 0 {
+		return moneyNumber(item.Value)
+	}
+	return lineAmountTotal(item.Lines) + item.Freight
+}
+
+func (a *businessAPI) templateForQuote(ctx context.Context, _ Quote) (BusinessTemplate, error) {
+	var tpl BusinessTemplate
+	if err := a.store.get(ctx, businessTemplateKind, builtInQuotePDFTemplateID, &tpl); err == nil && tpl.Kind == "quote" && !strings.EqualFold(tpl.Status, "Archived") {
+		return tpl, nil
+	}
+	return a.defaultTemplate(ctx, "quote")
+}
+
+func orderTemplateValues(item Order) map[string]string {
+	return map[string]string{
+		"company.name":   "STRATRONIX",
+		"customer.name":  item.Customer,
+		"record.id":      item.ID,
+		"record.date":    time.Now().Format("2006-01-02"),
+		"record.total":   item.Value,
+		"record.lines":   businessLinesHTML(item.Lines),
+		"order.po":       item.PO,
+		"order.delivery": item.Delivery,
+		"order.status":   item.Status,
+	}
+}
+
+func (a *businessAPI) templateForDocument(ctx context.Context, item Document) (BusinessTemplate, error) {
+	templateID := builtInDocumentInvoiceTemplateID
+	switch item.Type {
+	case "PI":
+		templateID = builtInPIPDFTemplateID
+	case "CI", "发票":
+		templateID = builtInDocumentInvoiceTemplateID
+	case "PL", "装箱单":
+		templateID = builtInDocumentPackingTemplateID
+	case "报关单":
+		templateID = builtInDocumentCustomsTemplateID
+	case "合同":
+		templateID = builtInDocumentContractTemplateID
+	}
+	var tpl BusinessTemplate
+	if err := a.store.get(ctx, businessTemplateKind, templateID, &tpl); err == nil && tpl.Kind == "document" && !strings.EqualFold(tpl.Status, "Archived") {
+		return tpl, nil
+	}
+	return a.defaultTemplate(ctx, "document")
+}
+
+func (a *businessAPI) customerByName(ctx context.Context, name string) (Customer, bool) {
+	items, err := listRecords[Customer](ctx, a.store, "accounts")
+	if err != nil {
+		return Customer{}, false
+	}
+	name = strings.TrimSpace(name)
+	for _, item := range items {
+		if !item.Archived && strings.EqualFold(strings.TrimSpace(item.Name), name) {
+			return item, true
+		}
+	}
+	return Customer{}, false
+}
+
+func currencyFromMoney(value string) string {
+	upper := strings.ToUpper(strings.TrimSpace(value))
+	for _, currency := range []string{"USD", "EUR", "CNY", "GBP"} {
+		if strings.HasPrefix(upper, currency) || strings.Contains(upper, " "+currency+" ") {
+			return currency
+		}
+	}
+	return "EUR"
+}
+
+func lineAmountTotal(lines []BusinessLine) float64 {
+	total := 0.0
+	for _, line := range lines {
+		total += line.Amount
+	}
+	return total
+}
+
+func cleanQuantity(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func formatPDFMoney(value float64) string {
+	return fmt.Sprintf("%.2f", value)
+}
+
+func quoteValidityDetail(validityDays, valid string) string {
+	validityDays = strings.TrimSpace(validityDays)
+	valid = strings.TrimSpace(valid)
+	if validityDays == "" {
+		validityDays = "30"
+	}
+	if valid == "" {
+		return validityDays + " days"
+	}
+	return validityDays + " days (until " + valid + ")"
+}
+
+func quotePDFSummaryLine(lines []BusinessLine) BusinessLine {
+	if len(lines) == 0 {
+		return BusinessLine{}
+	}
+	summary := lines[0]
+	if len(lines) == 1 {
+		return summary
+	}
+	sameProduct := true
+	totalQty := 0.0
+	totalAmount := 0.0
+	for _, line := range lines {
+		if line.ProductID != summary.ProductID || line.ProductName != summary.ProductName {
+			sameProduct = false
+		}
+		totalQty += line.Quantity
+		totalAmount += line.Amount
+	}
+	if sameProduct {
+		summary.Quantity = totalQty
+		summary.Amount = totalAmount
+		if totalQty > 0 {
+			summary.UnitPrice = totalAmount / totalQty
+		}
+		return summary
+	}
+	return BusinessLine{
+		ProductID:   "MIXED",
+		ProductName: lineSummary(lines),
+		Quantity:    totalQty,
+		UnitPrice:   0,
+		Amount:      totalAmount,
+	}
+}
+
+func stratronixQuoteNumber(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	id = strings.TrimPrefix(strings.TrimPrefix(id, "QUO-"), "Q-")
+	if strings.HasPrefix(id, "Q") {
+		return "STRAT-" + id
+	}
+	return "STRAT-Q" + id
+}
+
+func compactPDFContact(value string) string {
+	value = strings.TrimSpace(value)
+	for _, marker := range []string{"（", "(", "，", ",", ";", "；"} {
+		if index := strings.Index(value, marker); index > 0 {
+			value = strings.TrimSpace(value[:index])
+			break
+		}
+	}
+	return compactPDFText(value, 34)
+}
+
+func compactPDFText(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if limit <= 0 || len([]rune(value)) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return strings.TrimSpace(string(runes[:limit])) + "..."
+}
+
+func quoteValidityText(validUntil string) string {
+	validUntil = strings.TrimSpace(validUntil)
+	if validUntil == "" {
+		return ""
+	}
+	return validUntil
 }
 
 func (a *businessAPI) normalizeLines(ctx context.Context, input []BusinessLine, enforceStock bool) ([]BusinessLine, float64, string) {
@@ -705,7 +1069,7 @@ func (a *businessAPI) orderReferenced(ctx context.Context, id string) bool {
 }
 
 func validDocumentType(value string) bool {
-	return value == "PI" || value == "CI" || value == "PL" || value == "报关单"
+	return value == "PI" || value == "CI" || value == "PL" || value == "报关单" || value == "合同"
 }
 
 func validQuoteStatus(value string) bool {
@@ -713,7 +1077,7 @@ func validQuoteStatus(value string) bool {
 }
 
 func validOrderStatus(value string) bool {
-	return value == "Draft" || value == "Confirmed" || value == "Production" || value == "Shipped" || value == "Completed" || value == "Cancelled"
+	return value == "Draft" || value == "Confirmed" || value == "Paid" || value == "Production" || value == "Shipped" || value == "Completed" || value == "Cancelled"
 }
 
 func validDocumentStatus(value string) bool {

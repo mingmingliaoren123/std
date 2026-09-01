@@ -41,7 +41,9 @@ func (s *Service) Channels(ctx context.Context) ([]Channel, error) {
 		items[index].BindingMode = bindingMode
 		items[index].CanInstall = installSpec != "" || pluginID != ""
 		items[index].CanUninstall = pluginID != ""
-		items[index].Enabled = enabled[items[index].ID]
+		// plugins.entries is indexed by the OpenClaw plugin ID, which is not
+		// necessarily the same as the channel ID (for example WeChat).
+		items[index].Enabled = enabled[pluginID]
 		if items[index].Enabled {
 			items[index].Installed = true
 		}
@@ -367,7 +369,48 @@ func (s *Service) ChannelStatus(ctx context.Context, channel string) (map[string
 	if err := json.Unmarshal(out, &result); err != nil {
 		return nil, fmt.Errorf("%w: channels status: %v", ErrInvalidResponse, err)
 	}
+	// A gateway restart following a QR authorization can briefly return a stale
+	// "not configured" result. The configuration file is the authoritative
+	// record for credentials that have already been written successfully.
+	s.mergeConfiguredChannelState(result, channel)
 	return result, nil
+}
+
+func (s *Service) mergeConfiguredChannelState(result map[string]any, channel string) {
+	configured, accountCount := s.configuredChannelState(channel)
+	if !configured {
+		return
+	}
+	channels, _ := result["channels"].(map[string]any)
+	if channels == nil {
+		channels = map[string]any{}
+		result["channels"] = channels
+	}
+	entry, _ := channels[channel].(map[string]any)
+	if entry == nil {
+		entry = map[string]any{}
+		channels[channel] = entry
+	}
+	entry["configured"] = true
+
+	accounts, _ := result["channelAccounts"].(map[string]any)
+	if accounts == nil {
+		accounts = map[string]any{}
+		result["channelAccounts"] = accounts
+	}
+	entries, _ := accounts[channel].([]any)
+	hasConfiguredAccount := false
+	for _, raw := range entries {
+		if account, ok := raw.(map[string]any); ok {
+			if accountConfigured, _ := account["configured"].(bool); accountConfigured {
+				hasConfiguredAccount = true
+			}
+		}
+	}
+	if !hasConfiguredAccount {
+		entries = channelAccountPlaceholders(accountCount, true)
+		accounts[channel] = entries
+	}
 }
 
 func (s *Service) configuredChannelState(channel string) (bool, int) {

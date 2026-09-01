@@ -170,6 +170,40 @@ func TestConfiguredModelSelectionDoesNotRequireCredentialAndRegistersMiniMaxMode
 	if len(entries) != 1 || entries[0].ID != "MiniMax-M3" || entries[0].API != "anthropic-messages" {
 		t.Fatalf("MiniMax model was not registered in OpenClaw config: %+v", entries)
 	}
+	for _, entry := range entries {
+		if strings.Contains(entry.ID, "M2.7") {
+			t.Fatalf("MiniMax M2.7 should not be registered when only M3 was selected: %+v", entries)
+		}
+	}
+}
+
+func TestConfiguredModelSelectionPrunesUnselectedMiniMaxModels(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"models":{"providers":{"minimax":{"models":[
+			{"id":"MiniMax-M2.7","name":"MiniMax M2.7"},
+			{"id":"MiniMax-M3","name":"MiniMax M3"},
+			{"id":"custom-minimax-model","name":"Custom MiniMax"}
+		]}}},
+		"agents":{"defaults":{"model":{"primary":"minimax/MiniMax-M2.7"},"models":{"minimax/MiniMax-M2.7":{},"minimax/MiniMax-M3":{}}}}
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := New(Config{ConfigPath: configPath})
+	if err := service.SetConfiguredModelSelection("minimax/MiniMax-M3", []string{"minimax/MiniMax-M3"}); err != nil {
+		t.Fatalf("set selected models: %v", err)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(contents), "MiniMax-M2.7") {
+		t.Fatalf("unselected MiniMax M2.7 remained in config:\n%s", contents)
+	}
+	if !strings.Contains(string(contents), "MiniMax-M3") || !strings.Contains(string(contents), "custom-minimax-model") {
+		t.Fatalf("selected or custom MiniMax model was removed unexpectedly:\n%s", contents)
+	}
 }
 
 func TestConfigureWebSearchForMiniMaxModelProvider(t *testing.T) {
@@ -231,8 +265,83 @@ func TestChannelsReturnPinnedCatalogWithoutCLI(t *testing.T) {
 			break
 		}
 	}
-	if !feishu.Installed || feishu.Origin != "available" || feishu.AccountCount != 0 || feishu.Status != "installed" {
+	if feishu.Installed || feishu.Origin != "installable" || feishu.AccountCount != 0 || feishu.Status != "installable" {
 		t.Fatalf("pinned Feishu channel state is wrong: %+v", feishu)
+	}
+}
+
+func TestChannelsUsePluginIDForInstalledState(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"plugins":{"entries":{"feishu":{"enabled":true},"telegram":{"enabled":false}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	channels, err := New(Config{ConfigPath: configPath}).Channels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]Channel{}
+	for _, channel := range channels {
+		states[channel.ID] = channel
+	}
+	if !states["feishu"].Installed || !states["feishu"].Enabled {
+		t.Fatalf("feishu should inherit its own plugin state: %+v", states["feishu"])
+	}
+	if states["telegram"].Installed || states["telegram"].Enabled {
+		t.Fatalf("disabled Telegram plugin must not be marked installed: %+v", states["telegram"])
+	}
+	if states["imessage"].Installed || states["imessage"].Enabled {
+		t.Fatalf("an unrelated enabled plugin must not mark iMessage installed: %+v", states["imessage"])
+	}
+}
+
+func TestChannelStatusKeepsPersistedCredentialsDuringGatewayRestart(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"channels":{"feishu":{"enabled":true,"appId":"cli_test","appSecret":"secret_test"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := writeExecutable(t, dir, `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1 $2" != "channels status" ]]; then exit 2; fi
+printf '%s' '{"channels":{"feishu":{"configured":false,"running":true}},"channelAccounts":{"feishu":[{"accountId":"default","configured":false,"lastError":"not configured"}]}}'
+`)
+	status, err := New(Config{BinaryPath: script, ConfigPath: configPath}).ChannelStatus(context.Background(), "feishu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := status["channels"].(map[string]any)["feishu"].(map[string]any)
+	if configured, _ := channel["configured"].(bool); !configured {
+		t.Fatalf("persisted Feishu credentials were lost during stale status response: %#v", status)
+	}
+	accounts := status["channelAccounts"].(map[string]any)["feishu"].([]any)
+	if len(accounts) != 1 || !accounts[0].(map[string]any)["configured"].(bool) {
+		t.Fatalf("persisted Feishu account was not represented: %#v", status)
+	}
+}
+
+func TestSetConfiguredModelsDoesNotCreateAnUntestedDefault(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"agents":{"defaults":{}},"models":{"providers":{"demo":{"models":[{"id":"fast"}]}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := New(Config{ConfigPath: configPath})
+	if err := service.SetConfiguredModels([]string{"demo/fast"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	defaults := config["agents"].(map[string]any)["defaults"].(map[string]any)
+	if _, exists := defaults["model"]; exists {
+		t.Fatalf("untested model must not become a default: %#v", defaults)
+	}
+	if _, exists := defaults["models"].(map[string]any)["demo/fast"]; !exists {
+		t.Fatalf("saved model was not retained: %#v", defaults)
 	}
 }
 
@@ -293,6 +402,7 @@ esac
 func TestRunInjectsConfigPathAndGatewayTokenWithoutArguments(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "openclaw.json")
+	stateDir := filepath.Join(dir, "state")
 	envPath := filepath.Join(dir, "env.txt")
 	argsPath := filepath.Join(dir, "args.txt")
 	if err := os.WriteFile(configPath, []byte(`{"gateway":{"auth":{"mode":"token","token":"must-not-leak"}}}`), 0o600); err != nil {
@@ -301,15 +411,15 @@ func TestRunInjectsConfigPathAndGatewayTokenWithoutArguments(t *testing.T) {
 	script := writeExecutable(t, dir, `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" > "`+argsPath+`"
-printf 'OPENCLAW_CONFIG_PATH=%s\nOPENCLAW_GATEWAY_TOKEN=%s\n' "${OPENCLAW_CONFIG_PATH:-}" "${OPENCLAW_GATEWAY_TOKEN:-}" > "`+envPath+`"
+printf 'OPENCLAW_HOME=%s\nOPENCLAW_STATE_DIR=%s\nOPENCLAW_CONFIG_PATH=%s\nOPENCLAW_GATEWAY_TOKEN=%s\n' "${OPENCLAW_HOME:-}" "${OPENCLAW_STATE_DIR:-}" "${OPENCLAW_CONFIG_PATH:-}" "${OPENCLAW_GATEWAY_TOKEN:-}" > "`+envPath+`"
 printf '%s' '{"enabled":true}'
 `)
-	service := New(Config{BinaryPath: script, ConfigPath: configPath})
+	service := New(Config{BinaryPath: script, ConfigPath: configPath, StateDir: stateDir})
 	if _, err := service.CronStatus(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	env, _ := os.ReadFile(envPath)
-	if !strings.Contains(string(env), "OPENCLAW_CONFIG_PATH="+configPath) || !strings.Contains(string(env), "OPENCLAW_GATEWAY_TOKEN=must-not-leak") {
+	if !strings.Contains(string(env), "OPENCLAW_HOME="+dir) || !strings.Contains(string(env), "OPENCLAW_STATE_DIR="+stateDir) || !strings.Contains(string(env), "OPENCLAW_CONFIG_PATH="+configPath) || !strings.Contains(string(env), "OPENCLAW_GATEWAY_TOKEN=must-not-leak") {
 		t.Fatalf("OpenClaw environment was not injected:\n%s", env)
 	}
 	args, _ := os.ReadFile(argsPath)
@@ -334,7 +444,7 @@ func TestChannelsUsePinnedCatalogAndDefaultPackageWithoutCLI(t *testing.T) {
 			weixin = channel
 		}
 	}
-	if !feishu.Installed || feishu.Origin != "available" || feishu.PluginID != "feishu" {
+	if feishu.Installed || feishu.Origin != "installable" || feishu.PluginID != "feishu" || feishu.InstallSpec == "" {
 		t.Fatalf("Feishu pinned state is wrong: %+v", feishu)
 	}
 	if weixin.InstallSpec != "@tencent-weixin/openclaw-weixin@2.4.6" {
@@ -683,20 +793,16 @@ func TestSyncAgentsUsesApplicationManifest(t *testing.T) {
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	script := writeExecutable(t, dir, `#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$1 $2" == "agents list" ]]; then
-  printf '%s' '[{"id":"export-agent","identityName":"出口业务助手","identityEmoji":"🛒","model":"demo/model"}]'
-  exit 0
-fi
-exit 9
-`)
-	service := New(Config{BinaryPath: script, Manifest: manifestPath})
+	configPath := filepath.Join(dir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"agents":{"defaults":{"model":{"primary":"demo/model"}},"list":[{"id":"main","agentDir":"`+filepath.ToSlash(filepath.Join(dir, "agents", "main", "agent"))+`"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := New(Config{Manifest: manifestPath, ConfigPath: configPath})
 	agents, err := service.SyncAgents(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(agents) != 1 || agents[0].ID != "export-agent" {
+	if len(agents) != 2 || agents[1].ID != "export-agent" || agents[1].IdentityEmoji != "🛒" || agents[1].Model != "demo/model" {
 		t.Fatalf("unexpected agents: %#v", agents)
 	}
 	identity, err := os.ReadFile(filepath.Join(workspaceRoot, "export-agent", "IDENTITY.md"))
@@ -712,6 +818,38 @@ exit 9
 	}
 	if !strings.Contains(string(instructions), "Use supplied evidence only") {
 		t.Fatalf("instructions were not synchronized: %s", instructions)
+	}
+}
+
+func TestSyncAgentsDoesNotCallInteractiveConfigMutationCommands(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "config", "agents.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"schema_version":1,"workspace_root":"../workspaces","agents":[{"id":"export-agent","name":"出口业务助手","technical_name":"ExportAgent","emoji":"🛒","workspace":"export-agent","role":"domain","visibility":"business","instructions":"# Operating rules\n\nUse supplied evidence only."}]}`
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "openclaw.json")
+	if err := os.WriteFile(configPath, []byte(`{"agents":{"list":[{"id":"main","agentDir":"`+filepath.ToSlash(filepath.Join(dir, "agents", "main", "agent"))+`"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argsPath := filepath.Join(dir, "args.log")
+	script := writeExecutable(t, dir, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "`+argsPath+`"
+exit 9
+`)
+	agents, err := New(Config{BinaryPath: script, Manifest: manifestPath, ConfigPath: configPath}).SyncAgents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 2 || agents[1].ID != "export-agent" {
+		t.Fatalf("unexpected agents after config sync: %#v", agents)
+	}
+	if raw, _ := os.ReadFile(argsPath); len(raw) != 0 {
+		t.Fatalf("SyncAgents should not call mutation CLI commands, got: %s", raw)
 	}
 }
 
@@ -732,4 +870,40 @@ func writeExecutable(t *testing.T, dir, contents string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// TestCommandEnvPropagatesGatewayPort 锁定 commandEnv 会从 openclaw.json
+// 读出 gateway.port 并写入 OPENCLAW_GATEWAY_PORT，否则子进程会用默认
+// 19011 去连，导致 cron / agent 命令全部失败。
+func TestCommandEnvPropagatesGatewayPort(t *testing.T) {
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "openclaw.json")
+	cfg := `{
+  "gateway": {"port": 18789, "auth": {"mode": "token", "token": "abc"}}
+}`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENCLAW_GATEWAY_PORT", "")
+	svc := &Service{configPath: cfgPath, stateDirPath: tmp}
+	for _, kv := range svc.commandEnv() {
+		if strings.HasPrefix(kv, "OPENCLAW_GATEWAY_PORT=") {
+			if kv != "OPENCLAW_GATEWAY_PORT=18789" {
+				t.Fatalf("OPENCLAW_GATEWAY_PORT mismatch: %s", kv)
+			}
+			return
+		}
+	}
+	t.Fatal("OPENCLAW_GATEWAY_PORT not propagated to subprocess env")
+}
+
+func TestCommandEnvKeepsExistingGatewayPort(t *testing.T) {
+	t.Setenv("OPENCLAW_GATEWAY_PORT", "19099")
+	svc := &Service{configPath: "/nonexistent", stateDirPath: t.TempDir()}
+	for _, kv := range svc.commandEnv() {
+		if kv == "OPENCLAW_GATEWAY_PORT=19099" {
+			return
+		}
+	}
+	t.Fatal("explicit OPENCLAW_GATEWAY_PORT override was dropped")
 }

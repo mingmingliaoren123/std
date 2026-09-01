@@ -1,0 +1,60 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "recommendations",
+  "generated_at": "2026-08-21T16:37+08:00",
+  "trigger": "cron:8e5f00f8-2910-4a53-9ff8-a44a78da7175 每日推荐更新",
+  "filters": {"countries": ["Germany", "France", "Poland", "Sweden"], "topics": ["E-bike", "smart cycling", "dealers", "EU regulations"]},
+  "source_refresh": "本地业务数据 sta100-news-curator/output/sta100-news-2026-08-21.json(15:16 最新生成)+ 8/20.json + 8/19.json + 8/18.json + 8/17.json 交叉核对。本轮为 14:36 顺延 2 小时(16:37 Shanghai = CEST 10:37,8/21 周五上午早盘第二披露段开启),相对 14:36 版本的差异:① 时段进入早盘第二披露段(CEST 10:00-12:00),Bike Europe 头条区与 Reuters/Dutch News 财经条线出现 Accell 受托人资产清单或 Lapierre/O2Feel 接盘方公告的概率上升;② 头条候选排序按 E-bike + 经销商 + 欧盟法规 + 智能骑行四国四主题全覆盖重排;③ 五条候选全部基于本地 8/17-8/21 已落库的事实证据,未引入新未核实条目;④ 波兰与瑞典的覆盖通过 EU Regulation 2026/1030(EU 全境有效)与 Eurobike 2026 V2X(欧洲 OEM 全渠道整合)实现,本地业务数据中尚无波兰/瑞典国别专属条目,未做虚构国别事实。",
+  "items": [
+    {
+      "title": "Accell 集团 8/11 破产叠加 Lapierre 第戎司法重整,德法整车与 800 多家 Lapierre 经销商进入重组期",
+      "why": "Accell 荷兰实体 8/11 由阿姆斯特丹法院宣告破产,Lapierre 法国子公司 8/7 已申请司法重整,Raleigh 同步发出拟任命管理人通知,德法两国整车品牌与经销商渠道进入品牌拆分与新东家竞标窗口。",
+      "detail": "本地业务数据 sta100-news-curator 8/19 与 8/18 两条交叉条目互证:① Bike Europe 8/11 报道,阿姆斯特丹法院撤销 Accell 旗下荷兰子公司付款暂停并宣告破产,法院指定两名受托人公开宣布,集团员工约 2,000 名遍布 15 国,品牌矩阵涵盖 Haibike、Winora、Ghost、Batavus、Koga、Lapierre、Raleigh、Sparta、Babboe、Carqon,匈牙利工厂已停产;② Bike Europe 8/7 报道,法国子公司 Cycles Lapierre 已向第戎商业法院提交 redressement judiciaire,2025 年营业额约 9,910 万欧元、雇佣 106 名员工、运营网络覆盖 800 多家经销商、为 UCI 世巡赛车队 Picnic PostNL 供应战车;④ Accell 英国与爱尔兰子公司 Raleigh 同步发出拟任命管理人通知,德国、意大利、西班牙子公司正各自探索自救或清算。当前 Shanghai 16:37 对应 CEST 10:37(8/21 周五上午,处于早盘第二披露段 CEST 10:00-12:00 窗口内),距 8/25(周二)第戎商业法院 Lapierre 案下一次听证仅 4 天。建议立即:① 按品牌拆分应收、未交订单与库存,逐单复核定金、信用额与回款节点,Lapierre、Haibike、Winora、Ghost、Batavus、Koga、Raleigh 各列一行,Lapierre 端同步核对 Picnic PostNL 2026 赛季战车交付链;② 在 Lapierre 体系外主动接洽法国本土独立品牌 Moustache、Gitane、Decathlon B'twin 自营线,在 Haibike 体系外接洽德国中高端独立品牌 Riese & Müller、Canyon、Rotwild、FOCUS,把客户矩阵的 Accell 依赖度从权重视角降到 40% 以下;③ 与中信保或 Euler Hermes 协调,把 Lapierre/Raleigh 未交订单的信用保险限额重新评估,必要时把发货节奏从 L/C 60 天改到 L/C 30 天或预付款 30%;④ 8/21 CEST 10:00-12:00 早盘第二披露段盯盘 Bike Europe 头条区与 European Reuters/Dutch News 财经条线,首份公告落地后 30 分钟内给出对客通知模板;⑤ 8/25 第戎听证前 48 小时暂停 Lapierre 系所有新订单确认,等裁定结果再恢复。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52955/breaking-news-accell-group-declared-bankrupt",
+      "type": "行业重大风险",
+      "time": "2026-08-21T16:37+08:00",
+      "desc": "Accell 8/11 破产叠加 Lapierre 8/7 第戎司法重整,德法整车与 Lapierre 800 多家经销商进入重组期。"
+    },
+    {
+      "title": "Canyon V2X + DJI Avinox MG Concept 在 Eurobike 2026 首发,智能骑行进入 2027 量产窗口",
+      "why": "德国 Canyon 与 DJI 旗下 Avinox 在 Eurobike 2026 分别发布 V2X 车联网系统与 MG Concept 电机+变速一体化方案,量产目标均指向 2027 年,代表欧洲 OEM 把汽车级主动安全下沉到自行车。",
+      "detail": "本地业务数据 sta100-news-curator 8/21 最新条目确认两条主线:① Canyon 官方 6/10 披露,Eurobike 2026 期间首次发布四项智能骑行创新:Canyon Predict 系统搭载 Cognitive Core 计算核心、融合摄像头/雷达/Edge AI,可实时预测路况威胁;Stingr 智能头盔集成可伸缩 HUD 透明 OLED 显示屏与语音控制;Roadlite:ON CF 城市电助力车集成 V2X 车联网通信,与大众等品牌车辆实时交换位置与盲区信息,被称为首款接近量产的 V2X 量产车;② Bike News Online 6/26 报道,DJI 旗下 Avinox 在 Eurobike 2026 展出与 Canyon、Commencal、Forbidden、Megamo、Mondraker 合作的 MG Concept 概念车架,内置行星齿轮双电机与电子控制无级变速整合到中置电机,可实现 520% 齿比、300 Nm 扭矩下 0.1 秒内换挡,支持静止换挡与 AI 辅助自动选档,德国《BIKE》杂志引用 Avinox 称量产计划定于 2027 年。建议立即:① 把 V2X、撞击传感自动呼救、9 速液压刹车列入 2027 春款升级 checklist,与德系 OEM Canyon、Riese & Müller、Cube、FOCUS 与法系 OEM Decathlon、Moustache 在 9 月前完成方案对齐;② 在 Canyon Roadlite:ON V2X 与 DJI Avinox MG Concept 首批 OEM 名单上提前锁定候选 Tier-2 供应商角色,把软件/电子件作为议价锚;③ Q4 计划把'软件可升级 + 传感可扩展'作为差异化卖点,SKU 关键词加入 connected e-bike、V2X-ready、OTA-enabled,8 月底前上线;④ 跟踪 2027 年 Eurobike 改期与展馆调整对德法 OEM 集中档期的影响,提前 12 个月把新车型与软件版本的发布节奏对齐;⑤ 该产品线覆盖德/法/波/瑞四国,波兰与瑞典经销商可在 Eurobike 2027 同步接单,不必单独做国别预铺。",
+      "source": "Canyon / Eurobike 2026 / Bike News Online",
+      "sourceUrl": "https://app.canyon.com/en-us/blog-content/pr/eurobike-innovation/b10062026.html",
+      "type": "智能骑行/产品趋势",
+      "time": "2026-08-21T16:37+08:00",
+      "desc": "Canyon V2X + DJI Avinox MG Concept 双线首发,智能骑行进入 2027 量产窗口。"
+    },
+    {
+      "title": "欧盟 Regulation (EU) 2026/1030 6/1 生效,四国统一交通 GHG 核算方法落地",
+      "why": "欧洲议会与理事会 4/29 通过 Regulation (EU) 2026/1030,6/1 生效,对接 EN ISO 14083:2023 建立门到门 GHG 核算方法,德国/法国/波兰/瑞典四国均直接适用,电助力货运与共享出行运营商可凭此框架展示零排放效益。",
+      "detail": "本地业务数据 sta100-news-curator 8/21 最新条目确认:Regulation (EU) 2026/1030 由欧洲议会与理事会于 2026 年 4 月 29 日通过,对接 EN ISO 14083:2023 国际标准,2026 年 6 月 1 日生效,新框架以端到端方式量化运营、能源载具、车辆制造与报废及基础设施建设的排放,要求欧盟企业在自愿披露时使用一致且可核验的方法,避免不同方法与输入数据造成误导,并支持公共采购、低碳物流与可持续消费决策,欧盟委员会将向中小企业提供指导与数字工具,框架的全面适用预期在 2030 年底前完成。该规则对德国、法国、波兰、瑞典四国均直接有效,电助力货运(e-cargo)、共享出行、车队管理运营商可借此展示零排放效益并参与公共采购评分。建议立即:① 复核供应链与物流端的排放数据收集流程,把端到端覆盖范围(运营、能源载具、车辆制造与报废、基础设施建设)按四块拆解成内部数据字典,9 月底前完成模板;② 与欧洲四国的现有 e-cargo、共享出行运营商对接,把统一核算方法作为下一轮公共采购投标的法源依据,提前在德/法/波/瑞四国试点 2-3 个城市;③ 与 EN 15194(EPAC)、EN ISO 14083:2023、RoHS、REACH、CE 认证挂钩,作为产品端碳足迹披露的法源;⑤ 关注欧盟委员会后续发布的配套实施与授权法令以及面向中小企业的数字工具,2026 H-2 至 2027 H-1 是核心落地窗口;⑥ 在 2027 H-1 公共采购投标中,把 EU 2026/1030 作为'零排放车辆/服务'类别的强制评分项挂钩,提前与 Sweco、WSP、Egis、Arcadis、TYPSA 等咨询联合体建立接口。",
+      "source": "EUR-Lex / European Commission Mobility & Transport",
+      "sourceUrl": "https://transport.ec.europa.eu/news-events/news/new-eu-rules-harmonising-transport-emissions-calculations-take-effect-2026-06-01_en",
+      "type": "欧盟法规",
+      "time": "2026-08-21T16:37+08:00",
+      "desc": "EU 2026/1030 6/1 生效,德法波瑞四国统一交通 GHG 核算方法,2030 全面适用。"
+    },
+    {
+      "title": "O2Feel 自我管理叠加法国 2025 E-bike -16%,本土品牌矩阵加速整合",
+      "why": "O2Feel 7/17 已向 Wambrechies 法院申请 redressement judiciaire,叠加 2025 法国 E-bike 销量 50.7 万辆/-16% 与连续第三年负增长,法国本土品牌生存空间同时受到进口整车与中国代工产品挤压,Q4 须按品牌单独评估信用。",
+      "detail": "本地业务数据 sta100-news-curator 8/20 与 8/21 两条连续条目互证两条主线:① Bike Europe 7/17 报道,法国北部电助力整车与组装品牌 O2Feel 已向 Wambrechies 当地法院申请 redressement judiciaire 并启动公开投资人招募,业务覆盖城市通勤、家庭 cargo e-bike 与折叠电助力车型,母公司 Naxicap 2023 营收 2,940 万欧元、2022 峰值 3,220 万欧元,与法国 -16% 同步承压;② Bike Europe 4/30 数据区报告披露,2025 年法国自行车总销量 183.6 万辆/-6%、行业营收 31.1 亿欧元/-4.8%、E-bike 销量 50.7 万辆/大幅萎缩 16%,主因 2025 年 2 月法国国家购车补贴退出及商用电动载货专项补助到期;此前 Angell、Cyfac、Cyclable、Cowboy 等法国本土品牌也已出现财务困境或被收购。当前 Shanghai 16:37 对应 CEST 10:37(早盘第二披露段),O2Feel 战略投资人公告若未落地,大概率推迟至 12:00 CEST 午间披露窗口。建议立即:① 复盘与 O2Feel、Lapierre、Angell、Moustache、Cyclable 等法国本土品牌的合作敞口,在 11 月底前完成信用评分与未交订单复盘;② 把法国市场容量系数从 100% 下调到 85%,与法国 -16% 信号同步;③ 跟进法国本土独立品牌潜在投资方/接盘方动向 Moustache、Gitane、Neomouv 等,把候选名单前置到 Q4;④ 关注法国政府下半年是否重启国家级 E-bike 购车补贴或区域性消费刺激政策,Union Sport & Cycle 与法国国家统计局数据为关键信号源,2025 2 月补贴终止是 -16% 的核心成因,补贴重启将直接对冲 Q4 备货权重;⑤ 把法国 OEM/ODM 方案作为备选入库,绕开 Lapierre/O2Feel 双线重组带来的渠道断点;⑥ 在 8/21 CEST 12:00 午间披露窗口同步盯盘 Pro-Days 52849 / Union Sport & Cycle 是否发布 2026 上半年数据。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52746/french-e-bike-brand-o2feel-seeks-investors-after-insolvency-filing",
+      "type": "欧洲市场信号",
+      "time": "2026-08-21T16:37+08:00",
+      "desc": "O2Feel 自我管理叠加 2025 法国 E-bike -16%(销量 50.7 万辆),本土品牌加速整合。"
+    },
+    {
+      "title": "Bike24 Q2 +20.1%、ZIV Dealer Dashboard 上线、Klever MBO、Raymon 回暖,德国 E-bike 生态结构性回暖",
+      "why": "Bike24 Q2 集团营收 €96.1M/+20.1% 且本地化市场 +29.7%、ZIV Dealer Dashboard 7/29 上线、Klever 8/14 完成从光阳 MBO、Raymon 创始人回归后重回增长,德国整车、组件、渠道、经销商透明度四线同步走强。",
+      "detail": "本地业务数据 sta100-news-curator 8/18-8/21 连续四日条目确认四条主线:① Bike Europe 8/12/8/18 报道,德国 D2C 龙头 Bike24 在 2026 Q2 实现集团营收 9,610 万欧元、同比 +20.1%、本地化市场 +29.7% 至 2,150 万欧元、GSA +17.2%、整车 +11.0%、零部件/服饰 +22.3%,新增丹麦、斯洛文尼亚、爱尔兰三国本地化站点;② Bike Europe 8/4-8/18 报道,ZIV Dealer Dashboard 7/29 上线,被视为德国自行车市场透明度里程碑,ZIV 工业与经济政策负责人 Katharina Hinse 表示这是德国自行车市场迈向更大透明度的重要一步;③ Bike Europe 8/14 报道,速度型电助力品牌 Klever Mobility 完成从台湾光阳集团的管理层收购,由现任董事 Jan van der Ligt 与 Ruud Sjamaar 接手股权,转型为独立运营的欧洲企业,主要面向德国、荷兰、比利时等市场;④ Bike Europe 8/18 报道,Raymon Bicycles 在创始人 Susanne 与 Felix Puello 2023 年 10 月收回股权后,不到三年内宣称'重新定位正在奏效',销售增长与库存压缩推动品牌重回正轨。当前 Shanghai 16:37 对应 CEST 10:37(早盘第二披露段),距 8 月底 Q4 备货锁价窗口约 9 天,德国四线回暖信号已进入 Q4 SKU 决策视野。建议立即:① 复盘自家在 Bike24 现有产品 SKU 与认证状态,识别 Q4 可前置打样的爆品 SKU 至少 3 个,与 Bike24 采购团队建立对接,9 月底前锁定丹麦/斯洛文尼亚/爱尔兰至少 1 个新站点上架窗口;② 把 ZIV Dealer Dashboard 作为对德语区 IBD 渠道的横向比价与运营指标参考,与 Bike24 数据形成渠道矩阵的双向校验,8 月底前完成首次内部对标;③ 在 Klever 独立运营早期主动接洽,把速度型电助力(speed pedelec)组件、传感器、电子件作为切入 SKU;④ Raymon 渠道结构相对开放,在创始人主控的精品定位下,与其在 9 月前完成 2027 春款样车对接;⑤ Q4 计划把中高端电机备货占比从 30% 上调到 40%,入门款从 40% 下调到 30%,过渡期约 3 个月,与德国整车品牌 Q4 备货节奏同步。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52992/bike24-revenue-up-20-in-q2-as-european-markets-grow",
+      "type": "经销商/市场回暖",
+      "time": "2026-08-21T16:37+08:00",
+      "desc": "Bike24 Q2 +20.1%、ZIV Dashboard、Klever MBO、Raymon 回暖,德国 E-bike 生态四线走强。"
+    }
+  ]
+}

@@ -1,23 +1,52 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type businessAPI struct {
-	store    *businessStore
-	openClaw *openClawService
+	store             *businessStore
+	openClaw          *openClawService
+	assistantQueue    *assistantQueue
+	knowledgeReady    chan struct{}
+	channelSkillMu    sync.Mutex
+	channelSkillLocks map[string]*sync.Mutex
 }
 
 func newBusinessAPI(store *businessStore, openClaw *openClawService) *businessAPI {
-	return &businessAPI{store: store, openClaw: openClaw}
+	api := &businessAPI{store: store, openClaw: openClaw, assistantQueue: newAssistantQueue(2), knowledgeReady: make(chan struct{}), channelSkillLocks: make(map[string]*sync.Mutex)}
+	if store != nil {
+		_ = api.ensureBuiltInBusinessTemplates(context.Background())
+		_, _ = api.syncAgentKnowledgeFromLocalSources(context.Background())
+		go func() {
+			if _, err := api.syncKnowledgeSources(context.Background()); err != nil {
+				log.Printf("knowledge source sync warning: %v", err)
+			}
+			close(api.knowledgeReady)
+		}()
+		go api.knowledgeSyncLoop()
+	}
+	return api
+}
+
+func (a *businessAPI) knowledgeSyncLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		if _, err := a.syncKnowledgeSources(context.Background()); err != nil {
+			log.Printf("knowledge source sync warning: %v", err)
+		}
+	}
 }
 
 func (a *businessAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -34,10 +63,14 @@ func (a *businessAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.searchHandler(w, r)
 	case "assistant":
 		a.assistantRouter(w, r, parts[1:])
+	case "channel-skill":
+		a.channelSkillRoutesHandler(w, r, parts[1:])
 	case "agent-token-usage":
 		a.tokenUsageRouter(w, r, parts[1:])
 	case "accounts":
 		a.accountsRouter(w, r, parts[1:])
+	case "leads":
+		a.leadsRouter(w, r, parts[1:])
 	case "products":
 		a.productsRouter(w, r, parts[1:])
 	case "suppliers":
@@ -72,6 +105,8 @@ func (a *businessAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.templatesRouter(w, r, parts[1:])
 	case "settings":
 		a.settingsRouter(w, r, parts[1:])
+	case "email":
+		a.emailRouter(w, r, parts[1:])
 	case "agent-backups":
 		a.agentBackupsHandler(w, r)
 	default:
@@ -84,6 +119,10 @@ func (a *businessAPI) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Built-in cron results are part of the overview data contract. Reconcile
+	// them before reading jobs/automation so the initial page render uses the
+	// same status as the explicit runtime endpoint.
+	a.refreshOverviewJobRuntime(ctx)
 	customers, err := a.listCustomers(ctx)
 	if err != nil {
 		writeBusinessError(w, err)
@@ -119,19 +158,22 @@ func (a *businessAPI) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		writeBusinessError(w, err)
 		return
 	}
-	news, err := listRecords[NewsItem](ctx, a.store, "news")
+	news, err := a.ensureNewsAvailable(ctx)
 	if err != nil {
 		writeBusinessError(w, err)
 		return
 	}
-	recommendations, err := listRecords[Recommendation](ctx, a.store, "recommendations")
+	recommendations, err := a.ensureRecommendationsAvailable(ctx)
 	if err != nil {
 		writeBusinessError(w, err)
 		return
 	}
-	news = filterDisplayableNews(news)
-	recommendations = filterDisplayableRecommendations(recommendations)
 	jobs, err := listRecords[Job](ctx, a.store, "jobs")
+	if err != nil {
+		writeBusinessError(w, err)
+		return
+	}
+	leads, err := listRecords[Lead](ctx, a.store, "leads")
 	if err != nil {
 		writeBusinessError(w, err)
 		return
@@ -146,9 +188,10 @@ func (a *businessAPI) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		writeBusinessError(w, err)
 		return
 	}
+	dataStatus := bootstrapDataStatus(customers, quotes, orders, documents, products, suppliers, files, news, recommendations, leads)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"schemaVersion":   businessSchemaVersion,
-		"dataStatus":      "seeded_demo_data",
+		"dataStatus":      dataStatus,
 		"customers":       customers,
 		"quotes":          quotes,
 		"orders":          orders,
@@ -159,11 +202,22 @@ func (a *businessAPI) bootstrapHandler(w http.ResponseWriter, r *http.Request) {
 		"news":            news,
 		"recommendations": recommendations,
 		"jobs":            jobs,
+		"leads":           leads,
 		"plugins":         plugins,
 		"overview":        a.overviewSummaryData(ctx),
 		"automation":      a.overviewAutomationData(ctx),
 		"preferences":     preferences,
+		"knowledgeIndex":  a.knowledgeIndexStatus(ctx),
+		"oemCategories":   a.oemKnowledgeCategories(ctx),
 	})
+}
+
+func bootstrapDataStatus(customers []Customer, quotes []Quote, orders []Order, documents []Document, products []Product, suppliers []Supplier, files []PrivateFile, news []NewsItem, recommendations []Recommendation, leads []Lead) string {
+	count := len(customers) + len(quotes) + len(orders) + len(documents) + len(products) + len(suppliers) + len(files) + len(news) + len(recommendations) + len(leads)
+	if count == 0 {
+		return "system_defaults_only"
+	}
+	return "local_business_data"
 }
 
 func (a *businessAPI) searchHandler(w http.ResponseWriter, r *http.Request) {

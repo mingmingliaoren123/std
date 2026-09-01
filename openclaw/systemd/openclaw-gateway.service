@@ -23,6 +23,7 @@ Environment=OPENCLAW_SYSTEMD_UNIT=openclaw-gateway.service
 Environment=OPENCLAW_SERVICE_MARKER=openclaw
 Environment=OPENCLAW_SERVICE_KIND=gateway
 Environment=OPENCLAW_SERVICE_VERSION=2026.7.1-2
+ExecStartPre=%h/gsx/gitdir/std/openclaw/scripts/bootstrap-state.sh
 
 [Install]
 WantedBy=default.target

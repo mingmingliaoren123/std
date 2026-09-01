@@ -1,0 +1,56 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "news",
+  "items": [
+    {
+      "category": "产品",
+      "title": "德国NCTE电助力扭矩传感器2026上半年销售同比增长53%",
+      "summary": "总部位于德国Oberhaching的非接触式扭矩传感器厂商NCTE公布,2026年上半年营收同比增长53%,电助力自行车业务为主要驱动力。",
+      "content": "据Bike Europe德国板块报道,NCTE AG(NCTE AG,Oberhaching,Bavaria)是一家专注磁致伸缩非接触扭矩测量技术的德国传感器供应商,其2026年上半年营收达230万欧元,同比增长53%,EBITDA亏损同比收窄49万欧元至-35.7万欧元。电助力自行车(e-bike)被列为本期增长的主要驱动力,核心客户订单回升并新增一家大型客户,公司正加强销售团队并对重点市场做集中投入。NCTE管理层预计2026年下半年营收在440-540万欧元区间,EBITDA介于-50万欧元至+10万欧元之间。值得关注的是NCTE同期股价累计下跌66.6%,业绩与资本市场表现出现背离;另需复核下半年订单兑现与新客户实际落地情况。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/germany",
+      "time": "2026-08-06",
+      "relevance": "高 — Bike Europe官方渠道,德国本土e-bike核心零部件供应商,数据具体,可用于E-bike供应链景气度研判"
+    },
+    {
+      "category": "欧洲市场",
+      "title": "Pro-Days 2026:法国市场连续第三年下滑,巴黎展会仍显韧性",
+      "summary": "法国2025年自行车销量同比降6%,营收降4.8%,电助力自行车销量降16%,但巴黎Pro-Days 2026展会现场仍保持活力。",
+      "content": "Bike Europe法国板块报道,法国Union Sport & Cycle发布《Observatoire du Cycle》报告指出,2025年法国自行车总销量183.6万辆,同比下滑6%;含配件及维修的市场总营收31.1亿欧元,同比下降4.8%;电助力自行车销量50.7万辆,同比大幅下降16%,主因是2025年2月法国国家购车补贴终止以及针对商用电动载货自行车的专项补助到期。即便如此,在Eurobike结束一周后于巴黎举办的Pro-Days 2026专业展仍呈现活力,众多本土及欧洲品牌(包含Mavic、Velo de Ville、Moustache、Lapierre等)同台亮相,Gravel与儿童车是少数仍逆势增长的常规品类。建议复核下半年法国补贴政策动向及电助力细分品类库存出清节奏。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/france",
+      "time": "2026-07-30",
+      "relevance": "高 — Bike Europe官方渠道,直接覆盖法国市场结构与展会观察,数据完整且具备时效"
+    },
+    {
+      "category": "渠道",
+      "title": "ZIV经销商数据管理平台上线,德国自行车销售数据走向透明化",
+      "summary": "德国自行车工业协会(ZIV)推出dealer dashboard,接入600余家经销商月度销售数据,提升德国自行车零售市场透明度。",
+      "content": "Bike Europe报道,ZIV(德国自行车工业协会)市场数据服务的核心分析工具dealer dashboard已正式上线,目前已有超过600家德国自行车经销商注册提供数据。零售商可按产品类别、价格区间、地区与品牌,将自身销售业绩与整体市场表现对比,识别竞争优劣势与营运优化空间,所有数据均经过汇总与匿名化处理。ZIV产业与经济政策主管Katharina Hinse表示,这是提升德国自行车市场透明度的重要一步,同时为后续Industry Pro付费版奠定数据基础。该平台对英国Bicycle Association模式进行了借鉴,可为欧洲其他市场数据基建提供参照。建议复核平台覆盖的样本结构是否能代表全国大盘。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52904/ziv%E7%B6%93%E9%8A%B7%E5%95%86%E6%95%B8%E6%93%9A%E7%AE%A1%E7%90%86%E5%B9%B3%E5%8F%B0%E4%B8%8A%E7%B7%9A%EF%BC%8C%E5%BE%B7%E5%9C%8B%E8%87%AA%E8%A1%8C%E8%BB%8A%E9%8A%B7%E5%94%AE%E6%95%B8%E6%93%9A",
+      "time": "2026-07-22",
+      "relevance": "高 — Bike Europe官方原文确认,直接影响德国渠道研判与零售竞争格局分析"
+    },
+    {
+      "category": "行业资讯",
+      "title": "德国联邦卡特尔局批准DuTech集团收购Accell集团",
+      "summary": "德国反垄断机构Bundeskartellamt于2026年7月8日无条件批准新加坡DuTech集团对荷兰Accell集团的收购。",
+      "content": "Bike Europe德国板块报道,德国联邦卡特尔局(Bundeskartellamt)已正式批准新加坡投资公司DuTech Group对荷兰自行车制造商Accell Group的收购计划。卡特尔局主席Andreas Mundt表示,该并购无论按整体自行车市场还是按电助力与非电助力细分市场考察,均不会引发竞争担忧,合并后双方仍将面对Trek(含Diamant、Electra)、PON集团(含Gazelle、Kalkhoff、FOCUS、Cannondale、Urban Arrow)及Cube等众多重要对手。DuTech旗下品牌包括Prophete、Kreidler、vsf fahrradmanufaktur、Rex、e-bike manufaktur;Accell在德国市场拥有Haibike、GHOST、WINORA、Batavus、KOGA、Lapierre、Raleigh及载货品牌Babboe、Carqon。该批准为Accell集团在被KKR于2022年以15.6亿欧元收购后陷入困境、出售流程最终落地铺平道路。建议复核DuTech后续整合策略及Haibike等核心品牌的渠道与产品规划。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/germany",
+      "time": "2026-07-08",
+      "relevance": "高 — Bike Europe官方渠道,涉及德国电助力市场头部品牌所有权变更,影响欧洲产业格局"
+    },
+    {
+      "category": "法规",
+      "title": "Velo de Ville总经理Volker Thiemann:现行电助力自行车的法律地位面临风险",
+      "summary": "德国电助力自行车品牌Velo de Ville总经理Volker Thiemann警告,新技术演进可能威胁现行电助力自行车的法律地位。",
+      "content": "Bike Europe德国板块报道,位于德国Altenberge的电助力自行车品牌Velo de Ville总经理Volker Thiemann在受访时表示,公司逾80%的产能来自电助力自行车,他对中长期市场仍持乐观态度,但同时担忧近年部分技术演进可能威胁现行e-bike的法律定义与上路地位。Velo de Ville成立于1966年,目前主推Custom-Made项目,通过专业零售商为消费者提供按需配置的电助力整车;公司近期还与ZEG(Zweirad-Einkaufs-Genossenschaft)达成战略合作,从2026年9月1日起作为ZEG成员零售商的直接供应商。Thiemann的表态与法国UESC近期关于不合规电助力车占比94%的报告相互呼应,显示欧洲市场对合规与执法节奏的关注度上升。建议复核德、法两国监管机构对S-Pedelec、改装车与跨境电商电助力产品的最新执法案例。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/germany",
+      "time": "2026-07-28",
+      "relevance": "高 — Bike Europe官方渠道,德国本土品牌高管发声,直接关联E-bike法规与产品定义风险"
+    }
+  ]
+}

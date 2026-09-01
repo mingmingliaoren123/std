@@ -1,0 +1,73 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "/home/User/gsx/gitdir/std/data/openclaw-home/workspace",
+      "models": {}
+    },
+    "list": [
+      {
+        "id": "main",
+        "workspace": "/home/User/gsx/gitdir/std/data/openclaw-home/workspace",
+        "agentDir": "/home/User/gsx/gitdir/std/data/openclaw-state/agents/main/agent",
+        "identity": {
+          "name": "STA-100 主智能体",
+          "emoji": "🧭"
+        }
+      }
+    ]
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "b3e629fa5822995d874f1091176f05da3b3c477d17cb5220"
+    },
+    "port": 19011,
+    "bind": "loopback",
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    },
+    "controlUi": {
+      "allowInsecureAuth": true
+    },
+    "nodes": {
+      "denyCommands": [
+        "camera.snap",
+        "camera.clip",
+        "screen.record",
+        "contacts.add",
+        "calendar.add",
+        "reminders.add",
+        "sms.send",
+        "sms.search"
+      ]
+    }
+  },
+  "session": {
+    "dmScope": "per-channel-peer"
+  },
+  "tools": {
+    "profile": "coding"
+  },
+  "plugins": {
+    "entries": {}
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {}
+  },
+  "auth": {
+    "profiles": {}
+  },
+  "wizard": {
+    "lastRunAt": "2026-09-01T09:06:31+08:00",
+    "lastRunVersion": "2026.7.1-2",
+    "lastRunCommand": "bootstrap",
+    "lastRunMode": "local"
+  },
+  "meta": {
+    "lastTouchedVersion": "2026.7.1-2",
+    "lastTouchedAt": "2026-09-01T09:06:31+08:00"
+  }
+}

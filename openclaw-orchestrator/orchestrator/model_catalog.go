@@ -9,11 +9,11 @@ const ModelCatalogVersion = "openclaw-2026.7.1-2"
 var fixedModelCatalog = []Model{
 	{Key: "deepseek/deepseek-chat", Name: "DeepSeek Chat", Input: "text", ContextWindow: 131072},
 	{Key: "deepseek/deepseek-reasoner", Name: "DeepSeek Reasoner", Input: "text", ContextWindow: 131072},
-	{Key: "deepseek/deepseek-v4-flash", Name: "DeepSeek V4 Flash", Input: "text", ContextWindow: 1000000, Tags: []string{"configured", "alias:DeepSeek"}},
+	{Key: "deepseek/deepseek-v4-flash", Name: "DeepSeek V4 Flash", Input: "text", ContextWindow: 1000000, Tags: []string{"alias:DeepSeek"}},
 	{Key: "deepseek/deepseek-v4-pro", Name: "DeepSeek V4 Pro", Input: "text", ContextWindow: 1000000},
 	{Key: "minimax/MiniMax-M2.7", Name: "MiniMax M2.7", Input: "text", ContextWindow: 204800},
 	{Key: "minimax/MiniMax-M2.7-highspeed", Name: "MiniMax M2.7 Highspeed", Input: "text", ContextWindow: 204800},
-	{Key: "minimax/MiniMax-M3", Name: "MiniMax M3", Input: "text+image", ContextWindow: 1000000, Tags: []string{"default", "configured"}},
+	{Key: "minimax/MiniMax-M3", Name: "MiniMax M3", Input: "text+image", ContextWindow: 1000000},
 	{Key: "anthropic/claude-fable-5", Name: "Claude Fable 5", Input: "text+image", ContextWindow: 1000000},
 	{Key: "anthropic/claude-haiku-4-5", Name: "Claude Haiku 4.5", Input: "text+image", ContextWindow: 200000},
 	{Key: "anthropic/claude-haiku-4-5-20251001", Name: "Claude Haiku 4.5", Input: "text+image", ContextWindow: 200000},

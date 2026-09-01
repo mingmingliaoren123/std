@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,12 +43,18 @@ func main() {
 		if configPath == "" {
 			configPath = strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH"))
 			if configPath == "" {
-				if home, err := os.UserHomeDir(); err == nil {
+				if stateDir := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")); stateDir != "" {
+					configPath = filepath.Join(stateDir, "openclaw.json")
+				} else if home, err := os.UserHomeDir(); err == nil {
 					configPath = home + "/.openclaw/openclaw.json"
 				}
 			}
 		}
-		service = orchestrator.New(orchestrator.Config{BinaryPath: binaryPath, ConfigPath: configPath, Manifest: service.ManifestPath()})
+		stateDir := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR"))
+		if stateDir == "" && configPath != "" {
+			stateDir = filepath.Clean(filepath.Dir(configPath))
+		}
+		service = orchestrator.New(orchestrator.Config{BinaryPath: binaryPath, ConfigPath: configPath, StateDir: stateDir, Manifest: service.ManifestPath()})
 	}
 
 	command := strings.Join(flags.Args(), " ")

@@ -114,6 +114,38 @@ func (s *businessStore) migrate(ctx context.Context) error {
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_token_usage_created ON agent_token_usage(created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS knowledge_documents (
+			id TEXT PRIMARY KEY,
+			visibility TEXT NOT NULL,
+			source_path TEXT NOT NULL,
+			name TEXT NOT NULL,
+			category TEXT NOT NULL,
+			language TEXT NOT NULL,
+			sha256 TEXT NOT NULL,
+			bytes INTEGER NOT NULL,
+			source_updated_at TEXT NOT NULL,
+			indexed_at TEXT NOT NULL,
+			status TEXT NOT NULL,
+			error_text TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_documents_source ON knowledge_documents(visibility, source_path)`,
+		`CREATE TABLE IF NOT EXISTS knowledge_chunks (
+			id TEXT PRIMARY KEY,
+			document_id TEXT NOT NULL,
+			chunk_no INTEGER NOT NULL,
+			content TEXT NOT NULL,
+			vector BLOB NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(document_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document ON knowledge_chunks(document_id, chunk_no)`,
+		`CREATE TABLE IF NOT EXISTS knowledge_chunk_agents (
+			chunk_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			PRIMARY KEY(chunk_id, agent_id),
+			FOREIGN KEY(chunk_id) REFERENCES knowledge_chunks(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_agents_agent ON knowledge_chunk_agents(agent_id, chunk_id)`,
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -206,6 +238,22 @@ func listRecords[T any](ctx context.Context, s *businessStore, kind string) ([]T
 func (s *businessStore) softDelete(ctx context.Context, kind, id string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.ExecContext(ctx, `UPDATE records SET deleted_at=?,updated_at=? WHERE kind=? AND id=? AND deleted_at IS NULL`, now, now, kind, id)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return errRecordNotFound
+	}
+	return nil
+}
+
+// deleteRecord 物理删除一条记录。
+func (s *businessStore) deleteRecord(ctx context.Context, kind, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM records WHERE kind=? AND id=?`, kind, id)
 	if err != nil {
 		return err
 	}

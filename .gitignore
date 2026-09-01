@@ -7,3 +7,7 @@ openclaw/runtime/
 
 # Runtime state backups can contain customer data and credentials.
 openclaw/backups/
+
+# Generated STA-100 release artifacts. Keep release/README-DEPLOY.md tracked.
+release/sta100-release/
+release/*.tar.gz

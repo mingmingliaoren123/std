@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENTRY="$ROOT/app/node_modules/openclaw/openclaw.mjs"
+RELEASE_ROOT="$(cd "$ROOT/.." && pwd)"
 
 if [[ -n "${OPENCLAW_NODE:-}" ]]; then
   NODE="$OPENCLAW_NODE"
@@ -40,4 +41,15 @@ if [[ ! -f "$ENTRY" ]]; then
 fi
 
 export PATH="$(dirname "$NODE"):$PATH"
+export OPENCLAW_HOME="${OPENCLAW_HOME:-$RELEASE_ROOT/data/openclaw-home}"
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$RELEASE_ROOT/data/openclaw-state}"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$OPENCLAW_STATE_DIR/openclaw.json}"
+export OPENCLAW_PROFILE="${OPENCLAW_PROFILE:-sta100}"
+export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-19011}"
+mkdir -p "$OPENCLAW_HOME" "$OPENCLAW_STATE_DIR"
+
+if [[ "${1:-}" == "gateway" && -x "$ROOT/scripts/bootstrap-state.sh" ]]; then
+  "$ROOT/scripts/bootstrap-state.sh"
+fi
+
 exec "$NODE" "$ENTRY" "$@"

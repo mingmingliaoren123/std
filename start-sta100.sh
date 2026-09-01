@@ -13,12 +13,76 @@ ADDR="${STA100_ADDR:-127.0.0.1:18080}"
 MANIFEST="${STA100_AGENT_MANIFEST:-$WEB_DIR/config/sta100-agents.json}"
 
 export OPENCLAW_BIN="${OPENCLAW_BIN:-$ROOT_DIR/openclaw/bin/openclaw}"
-if [[ -f "$ROOT_DIR/openclaw/config/openclaw.json" ]]; then
-  export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$ROOT_DIR/openclaw/config/openclaw.json}"
-fi
+export OPENCLAW_HOME="${OPENCLAW_HOME:-$ROOT_DIR/data/openclaw-home}"
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$ROOT_DIR/data/openclaw-state}"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$OPENCLAW_STATE_DIR/openclaw.json}"
+export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
+export OPENCLAW_GATEWAY_PORT
 export STA100_AGENT_MANIFEST="$MANIFEST"
 
-mkdir -p "$BUILD_DIR" "$RUN_DIR" "$LOG_DIR"
+mkdir -p "$BUILD_DIR" "$RUN_DIR" "$LOG_DIR" "$OPENCLAW_HOME" "$OPENCLAW_STATE_DIR"
+
+bootstrap_openclaw_state() {
+  if [[ -x "$ROOT_DIR/openclaw/scripts/bootstrap-state.sh" ]]; then
+    "$ROOT_DIR/openclaw/scripts/bootstrap-state.sh"
+  fi
+}
+
+start_openclaw_gateway() {
+  local gateway_pid_file="$RUN_DIR/openclaw-gateway.pid"
+  local gateway_log="$LOG_DIR/openclaw-gateway.log"
+  if [[ -f "$gateway_pid_file" ]]; then
+    local pid
+    pid="$(cat "$gateway_pid_file" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$gateway_pid_file" 2>/dev/null || true
+  fi
+  mkdir -p "$LOG_DIR"
+  printf '%s start request at %s\n' "openclaw-gateway" "$(date -Iseconds)" >>"$gateway_log"
+  nohup setsid "$OPENCLAW_BIN" gateway --port "${OPENCLAW_GATEWAY_PORT:-18789}" >>"$gateway_log" 2>&1 </dev/null &
+  echo $! > "$gateway_pid_file"
+  sleep 1
+  if ! kill -0 "$(cat "$gateway_pid_file")" 2>/dev/null; then
+    echo "warning: OpenClaw gateway failed to start. Recent log:" >&2
+    tail -40 "$gateway_log" >&2 || true
+    rm -f "$gateway_pid_file"
+    return 1
+  fi
+}
+
+wait_for_openclaw_gateway() {
+  local attempts="${1:-30}"
+  local gateway_url="ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}"
+  for _ in $(seq 1 "$attempts"); do
+    if env OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" OPENCLAW_GATEWAY_PORT="$OPENCLAW_GATEWAY_PORT" "$OPENCLAW_BIN" gateway status --url "$gateway_url" --json --timeout 2000 2>/dev/null | tr -d '\n' | grep -Eq '"rpc"[[:space:]]*:[[:space:]]*\{[^}]*"ok"[[:space:]]*:[[:space:]]*true'; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+sync_openclaw_agents() {
+  if [[ "${STA100_SYNC_AGENTS_ON_START:-1}" != "1" ]] || [[ ! -x "$ROOT_DIR/openclaw/scripts/sync-agents.sh" ]]; then
+    return 0
+  fi
+  local sync_log="$LOG_DIR/openclaw-sync.log"
+  mkdir -p "$LOG_DIR"
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout "${STA100_SYNC_TIMEOUT:-120}"s "$ROOT_DIR/openclaw/scripts/sync-agents.sh" >>"$sync_log" 2>&1; then
+      return 0
+    fi
+  else
+    if "$ROOT_DIR/openclaw/scripts/sync-agents.sh" >>"$sync_log" 2>&1; then
+      return 0
+    fi
+  fi
+  echo "warning: OpenClaw Agent sync failed or timed out; STA-100 will still start, but agent calls may be unavailable." >&2
+  tail -40 "$sync_log" >&2 || true
+  return 1
+}
 
 is_running() {
   [[ -f "$PID_FILE" ]] || return 1
@@ -28,16 +92,33 @@ is_running() {
   kill -0 "$pid" 2>/dev/null
 }
 
+openclaw_gateway_running() {
+  local gateway_url="ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}"
+  env OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" OPENCLAW_GATEWAY_PORT="$OPENCLAW_GATEWAY_PORT" "$OPENCLAW_BIN" gateway status --url "$gateway_url" --json --timeout 2000 2>/dev/null | tr -d '\n' | grep -Eq '"rpc"[[:space:]]*:[[:space:]]*\{[^}]*"ok"[[:space:]]*:[[:space:]]*true' && return 0
+  local gateway_pid_file="$RUN_DIR/openclaw-gateway.pid"
+  [[ -f "$gateway_pid_file" ]] || return 1
+  local pid
+  pid="$(cat "$gateway_pid_file" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
 start() {
   if is_running; then
     echo "STA-100 web already running: pid $(cat "$PID_FILE")"
     return 0
   fi
+  bootstrap_openclaw_state
+  sync_openclaw_agents || true
+  start_openclaw_gateway || echo "warning: OpenClaw gateway is unavailable; STA-100 will still start, but OpenClaw features may be unavailable." >&2
+  if ! wait_for_openclaw_gateway "${STA100_GATEWAY_READY_TIMEOUT:-120}"; then
+    echo "warning: OpenClaw gateway did not become ready in time; STA-100 will still start, but agent calls may be unavailable." >&2
+  fi
   echo "building STA-100 web..."
   (cd "$WEB_DIR" && go build -trimpath -o "$BIN" .)
   echo "starting STA-100 web on $ADDR..."
   local -a env_args
-  env_args=(OPENCLAW_BIN="$OPENCLAW_BIN" STA100_AGENT_MANIFEST="$STA100_AGENT_MANIFEST")
+  env_args=(OPENCLAW_BIN="$OPENCLAW_BIN" OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" STA100_AGENT_MANIFEST="$STA100_AGENT_MANIFEST")
   if [[ -n "${OPENCLAW_CONFIG_PATH:-}" ]]; then
     env_args+=(OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH")
   fi

@@ -48,6 +48,7 @@ var (
 type Config struct {
 	BinaryPath string
 	ConfigPath string
+	StateDir   string
 	Manifest   string
 	PluginDir  string
 }
@@ -57,6 +58,7 @@ const agentMessageTimeoutSeconds = 300
 type Service struct {
 	bin          string
 	configPath   string
+	stateDirPath string
 	manifestPath string
 	pluginDir    string
 	qrMu         sync.Mutex
@@ -212,6 +214,17 @@ type ChannelAccountRequest struct {
 	UseEnv   bool   `json:"useEnv,omitempty"`
 }
 
+// ChannelMessageInput deliberately requires an explicit target. A bound
+// channel account identifies the sender, not the recipient; guessing a target
+// would risk delivering business content to the wrong contact.
+type ChannelMessageInput struct {
+	Channel string `json:"channel"`
+	Account string `json:"account,omitempty"`
+	Target  string `json:"target"`
+	Message string `json:"message"`
+	Media   string `json:"media,omitempty"`
+}
+
 type Agent struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -289,14 +302,19 @@ func (e *commandError) Unwrap() error { return e.err }
 func New(config Config) *Service {
 	config.BinaryPath = strings.TrimSpace(config.BinaryPath)
 	config.ConfigPath = strings.TrimSpace(config.ConfigPath)
+	config.StateDir = strings.TrimSpace(config.StateDir)
 	config.Manifest = strings.TrimSpace(config.Manifest)
 	config.PluginDir = strings.TrimSpace(config.PluginDir)
 	if config.PluginDir == "" && config.BinaryPath != "" {
 		config.PluginDir = filepath.Clean(filepath.Join(filepath.Dir(config.BinaryPath), "..", "..", "openclaw", "app", "node_modules", "openclaw", "dist", "extensions"))
 	}
+	if config.StateDir == "" && config.ConfigPath != "" {
+		config.StateDir = filepath.Clean(filepath.Dir(config.ConfigPath))
+	}
 	return &Service{
 		bin:          config.BinaryPath,
 		configPath:   config.ConfigPath,
+		stateDirPath: config.StateDir,
 		manifestPath: config.Manifest,
 		pluginDir:    config.PluginDir,
 		qrSessions:   make(map[string]*feishuQRSession),
@@ -315,16 +333,17 @@ func Discover(manifestPath string) *Service {
 			}
 		}
 	}
-	if bin == "" {
-		if path, err := exec.LookPath("openclaw"); err == nil {
-			bin = path
-		}
-	}
 	configPath := strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH"))
+	stateDir := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR"))
 	if configPath == "" {
-		if home, err := os.UserHomeDir(); err == nil {
+		if stateDir != "" {
+			configPath = filepath.Join(expandUserPath(stateDir), "openclaw.json")
+		} else if home, err := os.UserHomeDir(); err == nil {
 			configPath = filepath.Join(home, ".openclaw", "openclaw.json")
 		}
+	}
+	if stateDir == "" && configPath != "" {
+		stateDir = filepath.Clean(filepath.Dir(configPath))
 	}
 	if envManifest := strings.TrimSpace(os.Getenv("OPENCLAW_AGENT_MANIFEST")); envManifest != "" {
 		manifestPath = envManifest
@@ -333,7 +352,7 @@ func Discover(manifestPath string) *Service {
 	if bin != "" {
 		pluginDir = filepath.Clean(filepath.Join(filepath.Dir(bin), "..", "..", "openclaw", "app", "node_modules", "openclaw", "dist", "extensions"))
 	}
-	return New(Config{BinaryPath: bin, ConfigPath: configPath, Manifest: manifestPath, PluginDir: pluginDir})
+	return New(Config{BinaryPath: bin, ConfigPath: configPath, StateDir: stateDir, Manifest: manifestPath, PluginDir: pluginDir})
 }
 
 func (s *Service) BinaryPath() string { return s.bin }
@@ -746,6 +765,61 @@ func (s *Service) SetConfiguredModelSelection(defaultModel string, selectedModel
 	return s.applyModelSelectionConfig(defaultModel, models)
 }
 
+// SetConfiguredModels persists model records without selecting a default.
+// This is used for API keys that are saved before their real connectivity test
+// has passed. Agents will remain unavailable until a tested model is selected.
+func (s *Service) SetConfiguredModels(selectedModels []string) error {
+	seen := map[string]bool{}
+	models := make([]string, 0, len(selectedModels))
+	for _, modelID := range selectedModels {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" || seen[modelID] {
+			continue
+		}
+		if !modelIDPattern.MatchString(modelID) || !s.configuredModelAvailable(modelID) {
+			return ErrModelUnavailable
+		}
+		seen[modelID] = true
+		models = append(models, modelID)
+	}
+	if len(models) == 0 {
+		return ErrInvalidModel
+	}
+	// Do not erase a default that was configured before STA-100 started
+	// recording probe states. A later successful probe can still replace it
+	// explicitly, while a failed save remains non-destructive.
+	defaultModel := s.configuredDefaultModel()
+	if defaultModel != "" {
+		if !s.configuredModelAvailable(defaultModel) {
+			defaultModel = ""
+		} else if !seen[defaultModel] {
+			models = append([]string{defaultModel}, models...)
+		}
+	}
+	return s.applyModelSelectionConfig(defaultModel, models)
+}
+
+func (s *Service) configuredDefaultModel() string {
+	if s.configPath == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return ""
+	}
+	var config struct {
+		Agents struct {
+			Defaults struct {
+				Model json.RawMessage `json:"model"`
+			} `json:"defaults"`
+		} `json:"agents"`
+	}
+	if json.Unmarshal(raw, &config) != nil {
+		return ""
+	}
+	return strings.TrimSpace(parseModelReference(config.Agents.Defaults.Model))
+}
+
 func (s *Service) ClearConfiguredModelSelection() error {
 	if s.configPath == "" {
 		return ErrUnavailable
@@ -940,6 +1014,9 @@ func (s *Service) saveAPIKeyProfile(ctx context.Context, provider, profileID, ap
 		return err
 	}
 	if err := s.applyAuthProfileConfig(provider, profileID, "api_key"); err != nil {
+		return err
+	}
+	if err := s.propagateMainAuthToSubagents(); err != nil {
 		return err
 	}
 	go s.refreshGatewayAuthState(context.Background())
@@ -1149,7 +1226,12 @@ func (s *Service) applyModelSelectionConfig(defaultModel string, selectedModels 
 	}
 	agents := ensureObject(config, "agents")
 	defaults := ensureObject(agents, "defaults")
-	defaults["model"] = map[string]any{"primary": defaultModel}
+	if defaultModel == "" {
+		// A saved-but-unverified model must not become an empty/default model.
+		delete(defaults, "model")
+	} else {
+		defaults["model"] = map[string]any{"primary": defaultModel}
+	}
 	defaultModels := make(map[string]any, len(selectedModels))
 	for _, modelID := range selectedModels {
 		modelID = strings.TrimSpace(modelID)
@@ -1157,7 +1239,9 @@ func (s *Service) applyModelSelectionConfig(defaultModel string, selectedModels 
 			defaultModels[modelID] = map[string]any{}
 		}
 	}
-	defaultModels[defaultModel] = map[string]any{}
+	if defaultModel != "" {
+		defaultModels[defaultModel] = map[string]any{}
+	}
 	defaults["models"] = defaultModels
 	ensureConfiguredProviderModels(config, selectedModels)
 	data, err := json.MarshalIndent(config, "", "  ")
@@ -1221,6 +1305,33 @@ func configuredAgentTimeoutSeconds(value any) int {
 func ensureConfiguredProviderModels(config map[string]any, selectedModels []string) {
 	modelsObject := ensureObject(config, "models")
 	providers := ensureObject(modelsObject, "providers")
+	selected := map[string]bool{}
+	hasSelectedMiniMax := false
+	for _, modelID := range selectedModels {
+		modelID = strings.TrimSpace(modelID)
+		selected[modelID] = true
+		if strings.HasPrefix(modelID, "minimax/") {
+			hasSelectedMiniMax = true
+		}
+	}
+	if !hasSelectedMiniMax {
+		if providerObject, ok := providers["minimax"].(map[string]any); ok {
+			existing, _ := providerObject["models"].([]any)
+			pruned := make([]any, 0, len(existing))
+			for _, item := range existing {
+				entry, _ := item.(map[string]any)
+				id := strings.TrimSpace(stringValue(entry["id"]))
+				if id == "" {
+					pruned = append(pruned, item)
+					continue
+				}
+				if _, isPinnedMiniMax := fixedCatalogModel("minimax/" + id); !isPinnedMiniMax {
+					pruned = append(pruned, item)
+				}
+			}
+			providerObject["models"] = pruned
+		}
+	}
 	for _, modelID := range selectedModels {
 		provider, modelName, ok := strings.Cut(strings.TrimSpace(modelID), "/")
 		if !ok || provider != "minimax" {
@@ -1232,6 +1343,21 @@ func ensureConfiguredProviderModels(config map[string]any, selectedModels []stri
 		}
 		providerObject := ensureObject(providers, provider)
 		existing, _ := providerObject["models"].([]any)
+		pruned := make([]any, 0, len(existing))
+		for _, item := range existing {
+			entry, _ := item.(map[string]any)
+			id := strings.TrimSpace(stringValue(entry["id"]))
+			if id == "" {
+				pruned = append(pruned, item)
+				continue
+			}
+			candidate := provider + "/" + id
+			if _, isPinnedMiniMax := fixedCatalogModel(candidate); isPinnedMiniMax && !selected[candidate] {
+				continue
+			}
+			pruned = append(pruned, item)
+		}
+		existing = pruned
 		alreadyPresent := false
 		for _, item := range existing {
 			entry, _ := item.(map[string]any)
@@ -1241,6 +1367,7 @@ func ensureConfiguredProviderModels(config map[string]any, selectedModels []stri
 			}
 		}
 		if alreadyPresent {
+			providerObject["models"] = existing
 			continue
 		}
 		input := []any{"text"}
@@ -1484,14 +1611,39 @@ func (s *Service) SendAgentMessage(ctx context.Context, input AgentMessageInput)
 			break
 		}
 	}
+	if !available && s.manifestPath != "" {
+		// 自愈：当 OpenClaw 当前 Agent 列表缺少目标 Agent 时，主动重新同步应用侧
+		// 编排清单（manifest）。常见原因：manifest 已更新但启动时同步失败/超时，
+		// 或 OpenClaw state 与清单不一致。同步成功后立即重检一次目标 Agent，
+		// 仍找不到再返回 ErrAgentUnavailable，保证这一路径不会被静默回填。
+		syncCtx, syncCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		_, syncErr := s.SyncAgents(syncCtx)
+		syncCancel()
+		if syncErr == nil {
+			if refreshed, listErr := s.ListAgents(ctx); listErr == nil {
+				agents = refreshed
+				for _, agent := range agents {
+					if agent.ID == input.AgentID {
+						available = true
+						break
+					}
+				}
+			}
+		}
+	}
 	if !available {
 		return AgentMessageResult{}, ErrAgentUnavailable
 	}
+	// A fresh STA-100 deployment often creates subagents before the user saves
+	// model credentials. Copy the main agent's portable API-key profiles before
+	// each real message so overview/system agents and the 24 domain agents see
+	// the same model configuration.
+	_ = s.propagateMainAuthToSubagents()
 	if len(input.Sources) == 0 || len(input.Sources) > 8 || len(input.Allowlist) > 50 {
 		return AgentMessageResult{}, ErrInvalidSource
 	}
 	for _, source := range input.Sources {
-		if source != "本地业务数据库" && source != "客户私有知识库" && source != "联网检索" {
+		if source != "本地业务数据库" && source != "客户私有知识库" && source != "Agent 知识库" && source != "联网检索" {
 			return AgentMessageResult{}, ErrInvalidSource
 		}
 	}
@@ -1547,6 +1699,44 @@ func (s *Service) SendAgentMessage(ctx context.Context, input AgentMessageInput)
 	}
 	result.AgentID = input.AgentID
 	result.SessionKey = input.SessionKey
+	return result, nil
+}
+
+func (s *Service) SendChannelMessage(ctx context.Context, input ChannelMessageInput) (map[string]any, error) {
+	input.Channel = strings.TrimSpace(strings.ToLower(input.Channel))
+	input.Account = strings.TrimSpace(input.Account)
+	input.Target = strings.TrimSpace(input.Target)
+	input.Message = strings.TrimSpace(input.Message)
+	if !providerPattern.MatchString(input.Channel) || input.Target == "" || (input.Message == "" && strings.TrimSpace(input.Media) == "") {
+		return nil, ErrInvalidMessage
+	}
+	status, err := s.ChannelStatus(ctx, input.Channel)
+	if err != nil {
+		return nil, err
+	}
+	if configured, _ := status["configured"].(bool); !configured {
+		return nil, fmt.Errorf("channel %s is not configured", input.Channel)
+	}
+	args := []string{"message", "send", "--channel", input.Channel, "--target", input.Target, "--message", input.Message, "--json"}
+	if input.Account != "" {
+		args = append(args, "--account", input.Account)
+	}
+	if strings.TrimSpace(input.Media) != "" {
+		args = append(args, "--media", strings.TrimSpace(input.Media))
+	}
+	out, err := s.run(ctx, nil, args...)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{"sent": true, "channel": input.Channel, "target": input.Target}
+	if len(out) > 0 {
+		var parsed any
+		if json.Unmarshal(out, &parsed) == nil {
+			result["openclaw"] = parsed
+		} else {
+			result["output"] = strings.TrimSpace(string(out))
+		}
+	}
 	return result, nil
 }
 
@@ -2012,15 +2202,45 @@ func (s *Service) run(ctx context.Context, stdin io.Reader, args ...string) ([]b
 
 func (s *Service) commandEnv() []string {
 	env := os.Environ()
+	if os.Getenv("OPENCLAW_PROFILE") == "" {
+		env = append(env, "OPENCLAW_PROFILE=sta100")
+	}
+	if s.stateDirPath != "" && os.Getenv("OPENCLAW_HOME") == "" {
+		env = append(env, "OPENCLAW_HOME="+filepath.Dir(s.stateDirPath))
+	}
 	if s.configPath != "" && os.Getenv("OPENCLAW_CONFIG_PATH") == "" {
 		env = append(env, "OPENCLAW_CONFIG_PATH="+s.configPath)
+	}
+	if s.stateDirPath != "" && os.Getenv("OPENCLAW_STATE_DIR") == "" {
+		env = append(env, "OPENCLAW_STATE_DIR="+s.stateDirPath)
 	}
 	if os.Getenv("OPENCLAW_GATEWAY_TOKEN") == "" {
 		if token := s.gatewayTokenFromConfig(); token != "" {
 			env = append(env, "OPENCLAW_GATEWAY_TOKEN="+token)
 		}
 	}
+	// 当 OPENCLAW_GATEWAY_PORT 未设置（被设为空字符串也算未设置）时，
+	// 从 openclaw.json.gateway.port 推导并注入，避免子进程用默认 19011
+	// 错连到不在跑的 gateway。同时清理已经存在的空值条目。
+	portStr := strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_PORT"))
+	if portStr == "" {
+		env = removeEnv(env, "OPENCLAW_GATEWAY_PORT")
+		if port := s.gatewayPortFromConfig(); port > 0 {
+			env = append(env, fmt.Sprintf("OPENCLAW_GATEWAY_PORT=%d", port))
+		}
+	}
 	return env
+}
+
+func removeEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := env[:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, prefix) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func (s *Service) gatewayTokenFromConfig() string {
@@ -2046,6 +2266,29 @@ func (s *Service) gatewayTokenFromConfig() string {
 		return strings.TrimSpace(config.Gateway.Auth.Token)
 	}
 	return ""
+}
+
+// gatewayPortFromConfig reads the gateway port out of openclaw.json so that
+// spawned CLI processes inherit OPENCLAW_GATEWAY_PORT when the parent service
+// was launched without it set explicitly. Without this, the CLI defaults to
+// port 19011 even when the actual gateway listens on a different port.
+func (s *Service) gatewayPortFromConfig() int {
+	if s.configPath == "" {
+		return 0
+	}
+	raw, err := os.ReadFile(s.configPath)
+	if err != nil {
+		return 0
+	}
+	var config struct {
+		Gateway struct {
+			Port int `json:"port"`
+		} `json:"gateway"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return 0
+	}
+	return config.Gateway.Port
 }
 
 func rootCandidates() []string {

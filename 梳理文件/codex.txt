@@ -1,0 +1,40 @@
+cat ~/.codex/config.toml 
+model_provider = "custom"
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "AI"
+base_url = "https://www.codex2api.com"
+wire_api = "responses"
+requires_openai_auth = true
+
+[projects."/home/User/gsx/gitdir"]
+trust_level = "trusted"
+
+[projects."/home/User"]
+trust_level = "trusted"
+
+[projects."/home/User/gsx/gitdir/wireless-cast"]
+trust_level = "trusted"
+
+[projects."/home/User/gsx/gitdir/std"]
+trust_level = "trusted"
+
+[projects."/home/User/.codex"]
+trust_level = "trusted"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+
+cat ~/.codex/auth.json 
+{
+  "auth_mode": "apikey",
+  "OPENAI_API_KEY": "sk-930c6d30e37791ba359dda8299ff8c1cf4be4774ce66ed2b8a3fbe514bbeadf4"
+}
+
+
+cat ~/.codex/auth_bak.txt 
+sk-9f38561b18c97748ba9def03e6325b39d53106628670513ad006b114e658f05e
+sk-930c6d30e37791ba359dda8299ff8c1cf4be4774ce66ed2b8a3fbe514bbeadf4

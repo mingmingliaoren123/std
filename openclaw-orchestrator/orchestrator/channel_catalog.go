@@ -4,7 +4,7 @@ const ChannelCatalogVersion = "openclaw-2026.7.1-2"
 
 // fixedChannelCatalog is generated from `openclaw channels list --all --json` for OpenClaw 2026.7.1-2.
 var fixedChannelCatalog = []Channel{
-	{ID: "feishu", Name: "飞书", Installed: true, Origin: "available", AccountCount: 0, Description: "飞书机器人/应用通道，按 OpenClaw 引导绑定。"},
+	{ID: "feishu", Name: "飞书", Installed: false, Origin: "installable", AccountCount: 0, Description: "飞书机器人/应用通道，需安装通道包后按 OpenClaw 引导绑定。"},
 	{ID: "wecom", Name: "企业微信", Installed: false, Origin: "installable", AccountCount: 0, Description: "企业微信通道，需安装通道包并配置企业微信应用凭据。"},
 	{ID: "openclaw-weixin", Name: "微信", Installed: false, Origin: "installable", AccountCount: 0, Description: "微信通道，需安装 openclaw-weixin 通道包后按 OpenClaw 登录/绑定流程处理。"},
 	{ID: "telegram", Name: "Telegram", Installed: false, Origin: "installable", AccountCount: 0, Description: "Telegram Bot 通道，可通过 Bot Token 绑定。"},

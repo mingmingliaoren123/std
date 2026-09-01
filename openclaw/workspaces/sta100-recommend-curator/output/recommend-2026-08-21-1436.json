@@ -1,0 +1,61 @@
+{
+  "schema": "sta100.business.v1",
+  "type": "recommendations",
+  "generated_at": "2026-08-21T14:36+08:00",
+  "trigger": "cron:8e5f00f8-2910-4a53-9ff8-a44a78da7175 每日推荐更新",
+  "filters": {"countries": ["Germany", "France", "Poland", "Sweden"], "topics": ["E-bike", "smart cycling", "dealers", "EU regulations"]},
+  "source_refresh": "本地业务数据(sta100-news-curator/output/sta100-news-2026-08-21.json 14:21 最新生成 + 8/20.json + 8/19.json + 8/18.json + 8/17.json)交叉核对;关注国家由德/法扩展至德/法/波/瑞四国,关注主题由 E-bike + 骑行扩展至 E-bike + 智能骑行 + 经销商 + 欧盟法规。本轮相对 10:31 版本的调整:① 新增两条覆盖四国/新主题的事实 — SUMP 3.0(53101)与 Eurobike 2026 V2X 智能骑行(52746 同期由 Cycling Industries Europe 6/30 报道),首次进入 Top 5;② 保留 Accell/Lapierre 重整叠加、法国 O2Feel+市场 -16%、中国 H1 +36% / 41% 份额、NCTE +53% + Bike24 +20.1% 作为德/法/欧盟既有信号;③ 当前 Asia/Shanghai 14:36 对应 CEST 08:36(8/21 周五上午),距 8:00 CEST 早盘开盘已 36 分钟,8:00-10:00 早盘第一披露段接近关闭,关键公告落地窗口转入 10:00-12:00 早盘第二披露段或 12:00 午间披露窗口,第戎商业法院 Lapierre 案下一次听证维持 8/25(周二)CEST。",
+  "items": [
+    {
+      "title": "欧盟SUMP 3.0自行车专章生效,德法波瑞城市招标窗口同步开启",
+      "why": "欧盟委员会6/11发布SUMP 3.0与全新SUMP自行车参考文件,要求431个TEN-T城市节点(含汉堡、巴黎、华沙、斯德哥尔摩)在2027年底前完成SUMP编制,直接命中四国关注与欧盟法规主题。",
+      "detail": "本地业务数据(sta100-news-curator 8/21 最新条目,来源 Cycling Industries Europe 6/30)确认:欧盟委员会于2026年6月11日正式发布第三版可持续城市出行规划(SUMP 3.0)指南,并同步发布全新的SUMP自行车参考文件与UVARs参考文件;修订后的TEN-T法规要求431个城市节点在2027年底前完成SUMP编制并落地实施,自行车不再仅是可选项,而是嵌入愿景、目标、投资、实施与监测全流程;该参考文件对接欧盟绿色协议、可持续与智能出行战略及城市出行框架,覆盖停车、租赁、共享、货运、配套公共交通衔接、企业自行车租赁等场景。具体城市节点涵盖德国的汉堡、亚琛、慕尼黑等,法国的巴黎、马赛、里昂等,波兰的华沙、克拉科夫、格但斯克等,瑞典的斯德哥尔摩、哥德堡、马尔默等。当前为 Shanghai 14:36(对应 CEST 08:36,8/21 周五上午,8:00-10:00 早盘第一披露段接近关闭),距 2027 年底截止仅余 16-18 个月,城市招标窗口将分两批释放:第一批以编制咨询 + 数据基线服务为主,2026 Q4 起开放;第二批以硬件采购 + 智能骑行基础设施(V2X、共享、租赁、e-cargo)为主,2027 H1 进入主投放期。建议立即:① 组建四国对应城市节点的政府事务跟踪矩阵,德/法/波/瑞各至少 5 个节点,Hamburg、Paris、Warsaw、Stockholm 为第一梯队,9 月底前完成首轮拜访;② 把 SUMP 3.0 引用为提案的法源依据,与自家 V2X、智能头盔、车队管理软件、e-cargo 整车做能力挂钩,在欧标 EN15194 + UVARs 兼容上预做认证铺垫;③ 与本地咨询/工程联合体(Sweco、WSP、Egis、Arcadis、TYPSA)在 Q4 共同投标,把提案从硬件侧扩展为'硬件 + 软件 + 城市运营'三位一体方案;④ 关注各国具体节点城市的UVARs节奏,德国先行、法国跟进、波兰/瑞典同步的次序可能形成分级机会;⑤ 把 2027 H1 视作硬件与车队管理软件的关键交付节点,8 月底前锁定至少 2 个节点的预报名。",
+      "source": "Cycling Industries Europe",
+      "sourceUrl": "https://cyclingindustries.com/news/details/mandatory-urban-mobility-plans-set-to-boost-cycling-across-europe/",
+      "type": "欧盟法规/城市招标窗口",
+      "time": "2026-08-21T14:36+08:00",
+      "desc": "欧盟SUMP 3.0要求431个TEN-T城市节点2027年底前完成编制,德法波瑞四国同步进入城市招标窗口。"
+    },
+    {
+      "title": "Eurobike 2026 V2X与软件定义整车,智能骑行进入产品落地期",
+      "why": "Eurobike 2026释放V2X原型、DJI Avinox电助力电机、集成传感头盔、Shimano CUES等智能骑行主线,德法整车与零部件差异化从硬件转向软件,直接命中智能骑行主题。",
+      "detail": "本地业务数据(sta100-news-curator 8/21 最新条目,来源 Cycling Industry News 6/29 复盘)确认 Eurobike 2026 主线:① Canyon 联合大众展示 Roadlite:On V2X(Vehicle-to-Everything)原型车,实现自行车与汽车之间的实时通信;② DJI Avinox 推出与 Canyon、Commencal、Forbidden、Mondraker 联合开发的 MG Concept 电机,主打在重负载踩踏与静止状态下的变速能力;③ Kask 展示集成 MIPS-Evolve 撞击传感与自动紧急呼叫功能的 Protone 头盔;④ Shimano 继续推广 CUES 系列 9 速液压刹车(U4030),以提升大众价位整车制动安全性。报告同时指出,硬件与软件厂商的边界正快速模糊,软件将成为整车差异化与售后运营的关键。本届展会约 800 家参展商、15,130 名专业观众,2027 年将转向更短会期与新展馆区域,2028 年直接跳过。当前为 Shanghai 14:36(对应 CEST 08:36,8/21 周五上午),距 8 月底 Q4 备货锁价窗口 9 天,智能化升级已进入 Q4 SKU 决策视野。建议立即:① 把 V2X、撞击传感自动呼救、9 速液压刹车列入 2027 春款升级 checklist,与德系 OEM(Canyon、Riese & Müller、Cube、FOCUS)与法系 OEM(Decathlon、Moustache)在 9 月前完成方案对齐;② 在与 Canyon 的 Roadlite:On V2X、DJI Avinox 的 MG Concept 首批 OEM 名单上,提前锁定候选 Tier-2 供应商角色,把软件/电子件作为议价锚;③ Q4 计划把'软件可升级 + 传感可扩展'作为差异化卖点,SKU 关键词加入 connected e-bike / V2X-ready / OTA-enabled,8 月底前上线;④ 把 CUES U4030 9 速液压刹车列入入门款标配替代清单,把机械碟刹成本下移、把溢价空间留给智能电子件;⑤ 跟踪 2027 年 Eurobike 改期与展馆调整对德法 OEM 集中档期的影响,提前 12 个月把新车型与软件版本的发布节奏对齐。",
+      "source": "Cycling Industry News",
+      "sourceUrl": "https://www.cyclingindustry.news/analysis-5-things-we-learned-from-eurobike-2026/",
+      "type": "智能骑行/产品趋势",
+      "time": "2026-08-21T14:36+08:00",
+      "desc": "V2X原型、DJI Avinox电机、集成传感头盔、CUES液压刹车落地,软件定义整车成欧系新差异化锚。"
+    },
+    {
+      "title": "Accell破产叠加Lapierre司法重整,德法整车与电助力矩阵归属待定",
+      "why": "Accell荷兰8/11破产与Lapierre 8/7第戎司法重整叠加,Quanta Capital已表态整体收购意向,德法整车、电助力品牌与800多家Lapierre经销商进入重组期。",
+      "detail": "本地业务数据(sta100-news-curator 8/18-8/21 连续四日条目)确认三条主线:① Bike Europe 8/11 报道 52955,阿姆斯特丹法院撤销 Accell 旗下荷兰子公司的付款暂停并宣告破产,法院指定的两名受托人公开宣布集团约 2,000 名员工遍布 15 国,品牌矩阵涵盖 Haibike、Winora、Ghost、Batavus、Koga、Lapierre、Raleigh、Sparta、Babboe、Carqon,匈牙利工厂已停产;② Bike Europe 8/7 报道 52945,法国子公司 Cycles Lapierre 已向第戎商业法院提交 redressement judiciaire,2025 年营业额约 9,910 万欧元、雇佣 106 名员工、覆盖 800 多家经销商、为 UCI 世巡赛车队 Picnic PostNL 供应战车,CEO William Perrier 通过 Le Monde 表态决心不让这一法国自行车工业明珠消失;③ 都柏林投资机构 Quanta Capital 已对 Accell 集团整体收购表达意向(Endurance Sportswire 8/11 引用 Bike Europe,Quanta CEO Mel Sutcliffe: 'bid could come as early as next week',由多家投资者与一家全球金融机构组成联合体),德国联邦卡特尔局 7/8 已批准新加坡 DuTech 收购但该交易最终失败。当前 Shanghai 14:36(对应 CEST 08:36,8/21 周五上午),距 8:00 CEST 早盘开盘已 36 分钟,8:00-10:00 早盘第一披露段接近关闭,关键公告落地窗口转入 10:00-12:00 早盘第二披露段或 12:00 午间披露窗口;第戎商业法院 Lapierre 案下一次听证维持 8/25(周二)CEST。建议立即:① 按品牌拆分应收、未交订单与库存,逐单复核定金、信用额和回款节点,Lapierre/Haibike/Winora/Ghost/Batavus/Koga 各列一行,Lapierre 端同步核对 Picnic PostNL 世巡赛 2026 赛季战车交付链;② 在 Lapierre 体系外主动接洽法国本土独立品牌(Moustache、Gitane、O2Feel 接盘方、Decathlon B'twin 自营线),在 Haibike 体系外接洽德国中高端独立品牌(Riese & Müller、Canyon、Rotwild、FOCUS),把客户矩阵的 Accell 依赖度从权重视角降到 40% 以下;③ 备好 2027 框架订单的两套版本 — 重组成功版与品牌拆分版,以备 8/21 早盘第二披露段或午间披露窗口的潜在公告;④ 与中信保或 Euler Hermes 协调,把 Lapierre/Raleigh 未交订单的信用保险限额重新评估,必要时把发货节奏从 L/C 60 天改到 L/C 30 天或预付款 30%;⑤ 在 8/21 CEST 10:00 早盘第二披露段开启后安排专人盯盘 Bike Europe 头条区与欧洲 Reuters/Dutch News 财经条线,首份公告落地后 30 分钟内给出对客通知模板;⑥ 8/25 第戎听证前 48 小时暂停 Lapierre 系所有新订单确认,等裁定结果再恢复。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52955/breaking-news-accell-group-declared-bankrupt",
+      "type": "行业重大风险",
+      "time": "2026-08-21T14:36+08:00",
+      "desc": "Accell 荷兰 8/11 破产叠加 Lapierre 8/7 第戎司法重整,Quanta Capital 已表态整体收购意向。"
+    },
+    {
+      "title": "O2Feel破产保护叠加法国2025 E-bike -16%,本土品牌矩阵加速整合",
+      "why": "O2Feel 7/17已进入自我管理程序,叠加2025法国E-bike销量50.7万辆/-16%、连续第三年负增长,Angell、Cowboy、Cyfac、Cyclable等法国本土品牌相继承压,Q4须按品牌单独评估信用。",
+      "detail": "本地业务数据(sta100-news-curator 8/20、8/21 连续两日条目)与 Bike Europe 报告互证两条主线:① Bike Europe 7/17 报道 52746,法国北部 E-bike 品牌与组装商 O2Feel 已向 Wambrechies 当地法院申请 redressement judiciaire 并启动公开投资人招募,业务覆盖城市通勤、家庭 cargo e-bike 与折叠电助力车型,母公司 Naxicap 2023 营收 2,940 万欧元、2022 峰值 3,220 万欧元,与法国 -16% 同步承压;② Bike Europe 4/30 数据区报告 52221 披露,2025 年法国自行车总销量 183.6 万辆 / -6%、行业营收 31.1 亿欧元 / -4.8%、E-bike 销量 50.7 万辆 / 大幅萎缩 16%,主因 2025 年 2 月法国国家购车补贴终止及商用电动载货专项补助到期;此前 Angell、Cyfac、Cyclable、Cowboy 等法国本土品牌也已出现财务困境或被收购,O2Feel 案与 2025 -16% 叠加意味着法国本土 E-bike 制造与品牌端正在进入加速整合期,行业整合信号在 Lapierre(MTB/E-mountain)和 O2Feel(城市/通勤)两条细分线同时出现。当前 Shanghai 14:36(对应 CEST 08:36),已过 8:00 CEST 早盘第一披露段 36 分钟,O2Feel 战略投资人公告若未落地,大概率推迟至 10:00-12:00 早盘第二披露段或 12:00 午间披露窗口。建议立即:① 复盘与 O2Feel、Lapierre、Angell、Moustache、Cyclable 等法国本土品牌的合作敞口,在 11 月底前完成信用评分与未交订单复盘;② 把法国市场容量系数从 100% 下调到 85%,与法国 -16% 信号同步;③ 跟进法国本土独立品牌潜在投资方/接盘方动向(Moustache、Gitane、Neomouv 等),把候选名单前置到 Q4;④ 关注法国政府下半年是否重启国家级 E-bike 购车补贴或区域性消费刺激政策,Union Sport & Cycle 与法国国家统计局数据为关键信号源,2025 2 月补贴终止是 -16% 的核心成因,补贴重启将直接对冲 Q4 备货权重;⑤ 把法国 OEM/ODM 方案作为备选入库,绕开 Lapierre/O2Feel 双线重组带来的渠道断点;⑥ 在 8/21 CEST 10:00-12:00 早盘第二披露段同步盯盘 Pro-Days 52849 / Union Sport & Cycle 是否发布 2026 上半年数据。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52746/french-e-bike-brand-o2feel-seeks-investors-after-insolvency-filing",
+      "type": "欧洲市场信号",
+      "time": "2026-08-21T14:36+08:00",
+      "desc": "O2Feel 破产保护叠加 2025 E-bike -16%(销量 50.7 万辆),法国本土品牌矩阵加速整合。"
+    },
+    {
+      "title": "NCTE扭矩传感器H1 +53%与Bike24 Q2 +20.1%,德国E-bike与渠道双线回暖",
+      "why": "NCTE H1营收230万欧元/+53%由E-bike驱动、Bike24 Q2集团营收€96.1M/+20.1%且本地化市场+29.7%、ZIV Dealer Dashboard 7/29上线,德国中高端电助力组件与D2C渠道同步走强,经销商透明度同步提升。",
+      "detail": "本地业务数据(sta100-news-curator 8/18-8/21 连续四日条目)确认三条主线:① Bike Europe 8/12 报道 52923,德国非接触式扭矩传感器厂商 NCTE 在 2026 上半年实现同比 +53% 的销售增长,营收 230 万欧元,E-bike 类别是其扩张的最主要驱动,核心客户订单回升并新增一家大型客户,管理层预计 2026 H2 营收 440-540 万欧元区间,EBITDA 介于 -50 万欧元至 +10 万欧元;扭矩传感器是中高端电机(Bosch Performance CX、Shimano EP801、Yamaha PW 系列、Brose、ZF 等)的核心传感元件,NCTE +53% 是中高端 E-bike 整车备货回升的早期组件信号。② Bike Europe 8/12 报道 52992,德国 D2C 龙头 Bike24 在 2026 Q2 实现集团营收 9,610 万欧元、同比 +20.1%、本地化市场 +29.7% 至 2,150 万欧元、GSA +17.2%、整车 +11.0%、零部件/服饰 +22.3%,新增丹麦、斯洛文尼亚、爱尔兰三国本地化站点。③ Bike Europe 8/4 报道 52835,ZIV Dealer Dashboard 7/29 上线,被视为德国自行车市场透明度里程碑。当前 Shanghai 14:36(对应 CEST 08:36,8/21 周五上午),距 8:00 CEST 早盘开盘 36 分钟,正是向德系品牌采购窗口推送技术对照表的合适时点。建议立即:① 复盘涉及扭矩传感/踏频/助力曲柄的 SKU 与认证状态(CE、EN15194、RoHS、REACH),9 月底前补齐缺失;② 把 NCTE +53% 作为向德系品牌采购沟通的具体事实,主动提出替代或二供方案,准备好技术对照表与价格阶梯;③ Q4 计划把中高端电机备货占比从 30% 上调到 40%,入门款从 40% 下调到 30%,过渡期约 3 个月,与德系品牌 Q4 备货节奏同步;④ 与 NCTE 本部或其在欧洲的代理建立直接沟通,8 月底前完成对接,把对接窗口前置;⑤ 8/21(周五)CEST 10:00-12:00 早盘第二披露段盯盘 NCTE H2 业绩预告或新客户公告,把二供方案在公告后再升级为带具体 BOM 的正式 RFP;⑥ 复盘自家在 Bike24 现有产品 SKU 与认证状态,识别 Q4 可前置打样的爆品 SKU 至少 3 个,与 Bike24 采购团队建立对接,9 月底前锁定至少 1 个新站点(丹麦/斯洛文尼亚/爱尔兰)上架窗口;⑦ 把 ZIV Dealer Dashboard 作为对德语区 IBD 渠道的横向比价与运营指标参考,与 Bike24 数据形成渠道矩阵的双向校验。",
+      "source": "Bike Europe",
+      "sourceUrl": "https://www.bike-eu.com/52923/e-bike-component-supplier-ncte-reports-shifts-upwards-in-sales",
+      "type": "上游需求/渠道回暖",
+      "time": "2026-08-21T14:36+08:00",
+      "desc": "NCTE H1 +53%与Bike24 Q2 +20.1%同步,德国中高端E-bike组件与D2C渠道双线回暖。"
+    }
+  ],
+  "notes": "本次为 14:36 每日推荐更新(由 10:31 版本顺延,约 4 小时间隔)。本地业务数据 sta100-news-curator/output/sta100-news-2026-08-21.json(14:21 最新生成)+ 8/20.json + 8/19.json + 8/18.json + 8/17.json 交叉核对。本轮相对 10:31 版本的调整:① 关注国家由 ['Germany','France'] 扩展为 ['Germany','France','Poland','Sweden'],关注主题由 ['E-bike','cycling industry'] 扩展为 ['E-bike','smart cycling','dealers','EU regulations'];② 新增 SUMP 3.0(欧盟委员会6/11发布 + CIE 6/30 报道,431 个 TEN-T 城市节点含汉堡/巴黎/华沙/斯德哥尔摩,2027 年底前完成)与 Eurobike 2026 V2X + DJI Avinox + Kask MIPS-Evolve + Shimano CUES(CIN 6/29 复盘)两条新事实进入 Top 5,首条直接覆盖四国关注 + 欧盟法规主题,第二条覆盖智能骑行主题;③ 保留 Accell/Lapierre 重整叠加(52955 + 52945)、法国 O2Feel+市场 -16%(52746 + 52221)、NCTE +53%(52923)+ Bike24 +20.1%(52992)+ ZIV Dealer Dashboard(52835)三条作为德/法既有信号;④ 中国 H1 +36% / 41% 份额(53013)进入次优先观察池,因与 O2Feel+法国 -16% 与 NCTE/Bike24 的德国回暖已部分并行,留待 Eurostat 8 月底或 9 月发布 Q2 中国/台湾对欧电助力出口细分品类(高速/中速/低速/货运)数据时再升级回 Top 5;⑤ 当前 Asia/Shanghai 14:36 对应 CEST 08:36(8/21 周五上午,8:00-10:00 早盘第一披露段接近关闭),Accell 受托人资产清单、Lapierre/O2Feel 任命管理人、Quanta Capital 接盘意向等关键公告落地窗口转入 10:00-12:00 早盘第二披露段或 12:00 午间披露窗口,第戎商业法院 Lapierre 案下一次听证维持 8/25(周二)CEST;⑥ 德法 E-bike 入门款仍处去库存末段、中高端组件结构性回暖(NCTE +53%)双轨判断维持;⑦ 法国市场容量系数从 100% 下调到 85% 维持;⑧ '中国入门款均价 €329 vs 台湾均价 €1,709'作为向德系品牌提案的二供锚维持,留待 53013 后续 Eurostat 细分品类数据时激活;⑨ SUMP 3.0 与 Eurobike V2X 首次进入 Top 5,触发条件已满足。下轮触发 Top 5 调整的可能条件:① Bike Europe 头条区或 Featured/Financial 子区出现 Lapierre 任命管理人 / Quanta Capital 正式报价 / Klever 选型 / O2Feel 战略投资人正式公告;② Eurostat 8 月底或 9 月发布 Q2 中国/台湾对欧电助力出口细分品类(高速/中速/低速/货运)数据,把 53013 升级回 Top 5;③ 法国 Union Sport & Cycle 或国家统计局发布 2026 上半年数据,决定 O2Feel 案与市场容量系数走向;④ Bosch 52825 Hub Line 首批 OEM(Canyon、Gazelle、Moustache)的量产上市时间表与正式 BOM 公布,把 Eurobike V2X 条目与 Bosch Hub Line 合并;⑤ 任意四国节点城市(Hamburg/Paris/Warsaw/Stockholm)发布 SUMP 3.0 编制咨询或数据基线招标公告,把 SUMP 3.0 条目从顶层下沉为硬件/软件/车队管理分项条目。"
+}

@@ -30,7 +30,7 @@ openclaw/
 └── systemd/openclaw-gateway.service
 ```
 
-客户运行状态仍保存在 `~/.openclaw`。部署脚本先生成状态快照，再安装服务，不删除模型凭据、会话和客户配置。
+STA-100 发布包运行时使用部署目录内的独立 OpenClaw 状态：`data/openclaw-home` 和 `data/openclaw-state`。旧的系统级 `~/.openclaw` 不再作为 STA-100 部署包的默认状态来源，避免与系统原有 OpenClaw 配置、Agent 同步和模型凭据互相污染。
 
 ## 部署与复核
 
@@ -56,7 +56,7 @@ systemctl --user status openclaw-gateway.service
 
 STA-100 的 Agent 清单位于 `../sta100-web/config/sta100-agents.json`。本目录的 `scripts/sync-agents.sh` 只是兼容入口，会优先调用已构建的 Go 编排器，未构建时回退到 `go run`。
 
-模型密钥和 Gateway 令牌不写入本目录、页面、接口响应或命令参数；清单同步不会删除清单之外的 Agent 或工作区。
+模型密钥和 Gateway 令牌不写入页面、接口响应或命令参数；在发布包中会落到部署目录的 `data/openclaw-state`，不写入系统默认 `~/.openclaw`。清单同步不会删除清单之外的 Agent 或工作区。
 
 ## Agent 分层
 
@@ -69,4 +69,4 @@ STA-100 的 Agent 清单位于 `../sta100-web/config/sta100-agents.json`。本�
 
 ## 运行目录边界
 
-保留 `openclaw/app`、部署脚本、systemd 单元、工作区和 `~/.openclaw` 客户状态。旧独立 Node.js、下载缓存、源码快照和上游构建目录不参与盒子运行，已从设备清理。不得在升级或重新部署时删除 `~/.openclaw`，也不得删除仍由 Codex 使用的 `/usr/local/lib/node_modules/@openai`。
+保留 `openclaw/app`、部署脚本、systemd 单元、工作区和发布包内 `data/openclaw-state` 客户状态。旧独立 Node.js、下载缓存、源码快照和上游构建目录不参与盒子运行。系统原有 OpenClaw 可卸载；STA-100 运行只应调用本目录的 `openclaw/bin/openclaw`。不得删除仍由 Codex 使用的 `/usr/local/lib/node_modules/@openai`。

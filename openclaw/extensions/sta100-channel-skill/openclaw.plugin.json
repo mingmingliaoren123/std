@@ -1,0 +1,12 @@
+{
+  "id": "sta100-channel-skill",
+  "kind": "plugin",
+  "name": "STA-100 Channel Skill",
+  "description": "Forwards authorized channel messages to the STA-100 confirmation workflow.",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
